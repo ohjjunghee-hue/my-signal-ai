@@ -265,6 +265,77 @@ def loop():
             with lock:state.update(status='오류 후 재시도',errors=[str(e)[:250]])
         time.sleep(INTERVAL)
 
+
+# Chart and rule engine: historical signals are evaluated only with closed candles.
+def parse_rule(text):
+    text=str(text).strip().replace(' ', '')
+    if len(text)>140:raise ValueError('조건이 너무 깁니다')
+    m=re.search(r'거래량(?:이|이전보다|평균보다)?([0-9]+(?:\.[0-9]+)?)배',text)
+    if m:
+        value=float(m.group(1))
+        if not 1<=value<=100:raise ValueError('거래량 배수는 1~100 사이여야 합니다')
+        return {'kind':'volume','value':value,'label':f'거래량 {value:g}배 이상'}
+    m=re.search(r'(?:이격도|5일이격도)(?:가|는)?([0-9]+(?:\.[0-9]+)?)',text)
+    if m:
+        value=float(m.group(1))
+        if not 50<=value<=200:raise ValueError('이격도는 50~200 범위여야 합니다')
+        return {'kind':'disparity','value':value,'label':f'5봉 이격도 {value:g} 돌파'}
+    m=re.search(r'(\d+)(?:일|봉)선이?(\d+)(?:일|봉)선(?:을|상향)?돌파',text)
+    if m:
+        fast,slow=map(int,m.groups())
+        if not 2<=fast<slow<=120:raise ValueError('이동평균 기간은 2<=단기<장기<=120')
+        return {'kind':'cross','fast':fast,'slow':slow,'label':f'{fast}봉선 {slow}봉선 상향돌파'}
+    raise ValueError('지원 예시: 거래량 3배, 5일 이격도 103 돌파, 5일선이 20일선 돌파')
+
+def sma(values,period,i):
+    if i+1<period:return None
+    return sum(values[i+1-period:i+1])/period
+
+def chart_signals(candles,rule=None):
+    closes=[c['c'] for c in candles]; volumes=[c['v'] for c in candles];out=[]
+    for i in range(1,len(candles)):
+        if i<21:continue
+        prev_hi=max(x['h'] for x in candles[max(0,i-20):i]); prev_lo=min(x['l'] for x in candles[max(0,i-20):i])
+        ma5=sma(closes,5,i);ma20=sma(closes,20,i);old5=sma(closes,5,i-1);old20=sma(closes,20,i-1)
+        volbase=sum(volumes[i-20:i])/20
+        volratio=volumes[i]/max(volbase,1e-12)
+        # Observational technical markers; not trade instructions.
+        breakout=closes[i]>prev_hi and closes[i-1]<=max(x['h'] for x in candles[max(0,i-21):i-1]) and volratio>=1.5 and ma5>ma20
+        breakdown=closes[i]<prev_lo and volratio>=1.3
+        if breakout:out.append({'t':candles[i]['t'],'price':closes[i],'kind':'BUY_WATCH','reason':'20봉 고점 돌파·거래량 증가 (관찰)'})
+        if breakdown:out.append({'t':candles[i]['t'],'price':closes[i],'kind':'SELL_WATCH','reason':'20봉 저점 이탈 (위험 관찰)'})
+        if rule:
+            hit=False
+            if rule['kind']=='volume':hit=volratio>=rule['value'] and (volumes[i-1]/max(sum(volumes[i-21:i-1])/20,1e-12))<rule['value']
+            if rule['kind']=='disparity':
+                a=100*closes[i]/ma5;b=100*closes[i-1]/old5
+                hit=a>=rule['value'] and b<rule['value']
+            if rule['kind']=='cross':
+                f=rule['fast'];g=rule['slow'];af=sma(closes,f,i);ag=sma(closes,g,i);bf=sma(closes,f,i-1);bg=sma(closes,g,i-1)
+                hit=all(v is not None for v in (af,ag,bf,bg)) and af>ag and bf<=bg
+            if hit:out.append({'t':candles[i]['t'],'price':closes[i],'kind':'CUSTOM','reason':rule['label']})
+    return out
+
+def build_chart(market,unit,rule_text=''):
+    if not re.fullmatch(r'KRW-[A-Z0-9]{2,20}',market):raise ValueError('잘못된 종목 코드')
+    if unit not in (5,15,60,240):raise ValueError('지원하지 않는 봉 주기')
+    rule=parse_rule(rule_text) if rule_text.strip() else None
+    bars=fetch_candles(market,unit,200)
+    if len(bars)<40:raise ValueError('확정 캔들이 부족합니다')
+    closes=[x['c'] for x in bars]
+    candles=[dict(c,ma5=round(sma(closes,5,i),8) if i>=4 else None,ma20=round(sma(closes,20,i),8) if i>=19 else None,ma60=round(sma(closes,60,i),8) if i>=59 else None) for i,c in enumerate(bars)]
+    signals=chart_signals(bars,rule)
+    # Outcome is the future CLOSED candle close, strictly after each marker.
+    for sig in signals:
+        idx=next(i for i,b in enumerate(bars) if b['t']==sig['t'])
+        later=bars[idx+1:]
+        if later:
+            sig['observed_max_pct']=round((max(b['h'] for b in later)/sig['price']-1)*100,2)
+            sig['observed_min_pct']=round((min(b['l'] for b in later)/sig['price']-1)*100,2)
+            sig['forward_bars']=len(later)
+        else:sig['forward_bars']=0
+    return {'market':market,'unit':unit,'candles':candles,'signals':signals,'rule':rule,'closed_only':True,'generated_at':int(time.time()),'note':'확정봉만 사용. 화살표는 기술적 관찰 신호이며 검증된 매매 추천이 아님. 후속 최고·최저는 미래 확정봉의 고저점으로 계산하며 체결 수익률이 아님.'}
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         parsed=urllib.parse.urlparse(self.path)
@@ -292,10 +363,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return
         if path=='/health':
-            data=json.dumps({'ok':True,'engine':'V35','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
+            data=json.dumps({'ok':True,'engine':'INTEGRATED','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
         elif path=='/api/status':
             with lock: data=json.dumps(state,ensure_ascii=False).encode()
             typ='application/json; charset=utf-8'
+        elif path=='/api/chart':
+            try:
+                q=urllib.parse.parse_qs(parsed.query)
+                market=q.get('market',['KRW-BTC'])[0];unit=int(q.get('unit',['15'])[0]);rule=q.get('rule',[''])[0]
+                result=build_chart(market,unit,rule)
+                data=json.dumps(result,ensure_ascii=False,allow_nan=False).encode();typ='application/json; charset=utf-8'
+            except (ValueError,TypeError,OverflowError) as e:
+                data=json.dumps({'error':str(e)},ensure_ascii=False).encode();typ='application/json; charset=utf-8'
+                self.send_response(400);self.send_header('Content-Type',typ);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+            except Exception as e:
+                data=json.dumps({'error':'캔들 데이터 조회 실패: '+str(e)[:140]},ensure_ascii=False).encode();typ='application/json; charset=utf-8'
+                self.send_response(502);self.send_header('Content-Type',typ);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+        elif path=='/api/outcomes':
+            with sqlite3.connect(DB) as con:
+                rows=con.execute('SELECT market,first_seen,last_seen,entry,last_price,max_pct,min_pct,status,signal_type FROM signal_outcomes ORDER BY first_seen DESC LIMIT 100').fetchall()
+            data=json.dumps([dict(zip(('market','first_seen','last_seen','entry','last_price','max_pct','min_pct','status','signal_type'),r)) for r in rows],ensure_ascii=False).encode();typ='application/json; charset=utf-8'
         elif path=='/api/history':
             with sqlite3.connect(DB) as con:
                 rows=con.execute('SELECT ts,market,status,score,entry,stop,reason FROM snapshots ORDER BY id DESC LIMIT 200').fetchall()
