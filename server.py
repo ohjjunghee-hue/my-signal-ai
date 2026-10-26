@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MY SIGNAL AI PRO V33: research-only Bithumb scanner, stdlib server."""
+"""MY SIGNAL AI PRO V35: research-only Bithumb scanner, stdlib server."""
 import json, os, time, math, sqlite3, threading, urllib.request, urllib.parse, http.server, pathlib, statistics, re, html, xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 ROOT=pathlib.Path(__file__).parent
@@ -13,10 +13,10 @@ TOP=max(5,min(60,int(os.getenv('DEEP_MARKETS','25'))))
 BASE='https://api.bithumb.com'
 NEWS_FEEDS=[('CoinDesk','https://www.coindesk.com/arc/outboundfeeds/rss/'),('Cointelegraph','https://cointelegraph.com/rss')]
 lock=threading.Lock()
-state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V34','buy_enabled':False,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
+state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V35','selection_details':{},'outcome_summary':{},'buy_enabled':False,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
 
 def get_json(path):
-    req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V33/0.1','Accept':'application/json'})
+    req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V35/0.1','Accept':'application/json'})
     with urllib.request.urlopen(req,timeout=12) as res: result=json.load(res)
     if isinstance(result,dict) and result.get('error'):raise ValueError(str(result['error']))
     return result
@@ -92,7 +92,7 @@ def fetch_news():
     items=[]
     for source,url in NEWS_FEEDS:
         try:
-            req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 MY-SIGNAL-V33'})
+            req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 MY-SIGNAL-V35'})
             with urllib.request.urlopen(req,timeout=8) as r: raw=r.read(750000)
             root=ET.fromstring(raw)
             for item in root.findall('.//item')[:12]:
@@ -106,6 +106,62 @@ def db_init():
     with sqlite3.connect(DB) as con:
         con.execute('CREATE TABLE IF NOT EXISTS snapshots(id INTEGER PRIMARY KEY,ts INTEGER,market TEXT,status TEXT,score INTEGER,entry REAL,stop REAL,features TEXT,reason TEXT)')
         con.execute('CREATE INDEX IF NOT EXISTS ix_market_time ON snapshots(market,ts)')
+        con.execute('CREATE TABLE IF NOT EXISTS signal_outcomes(id INTEGER PRIMARY KEY,market TEXT,day TEXT,first_seen INTEGER,last_seen INTEGER,entry REAL,last_price REAL,max_pct REAL,min_pct REAL,status TEXT,signal_type TEXT,UNIQUE(market,day))')
+
+def select_deep_markets(tickers, top, cycle, midnight_leaders=None):
+    """Bounded selection with liquid baseline, midnight leaders and rotation.
+
+    This only improves coverage; it does not predict future returns.
+    """
+    eligible={x['market']:x for x in tickers if x.get('market')}
+    ranked=sorted(eligible.values(),key=lambda x:float(x.get('acc_trade_price_24h') or 0),reverse=True)
+    picked=[];sources={}
+    def add(x,reason):
+        if x and x['market'] not in sources and len(picked)<top:
+            picked.append(x);sources[x['market']]=reason
+    # Reserve space for dynamic and rotating candidates even when top is small.
+    liquid_slots=max(1,top//3)
+    for x in ranked[:liquid_slots]:add(x,'거래대금 상위')
+    leaders=midnight_leaders or []
+    for row in leaders[:max(1,top//3)]:
+        add(eligible.get(row.get('market')),'자정 급등 감시')
+    # A second path uses current 24h movers even outside the midnight window.
+    movers=sorted(ranked,key=lambda x:float(x.get('signed_change_rate') or 0),reverse=True)
+    for x in movers[:max(1,top//5)]:add(x,'24시간 상승 상위 · 이미 상승 주의')
+    remaining=[x for x in ranked if x['market'] not in sources]
+    slots=top-len(picked)
+    if remaining and slots:
+        start=(cycle*slots)%len(remaining)
+        for x in (remaining[start:]+remaining[:start])[:slots]:add(x,'순환 분석')
+    return picked,sources
+
+def update_outcomes(con, tickers, now_ts):
+    """Mark-to-market snapshots, no lookahead and no claim of executable fills.
+
+    Track maxima/minima only at subsequent observed tickers, not candle highs.
+    """
+    prices={x.get('market'):float(x.get('trade_price') or 0) for x in tickers}
+    rows=con.execute('SELECT id,market,entry,first_seen,last_seen,max_pct,min_pct FROM signal_outcomes WHERE status=?',('TRACKING',)).fetchall()
+    for id_,market,entry,first,last,hi,lo in rows:
+        price=prices.get(market,0)
+        if price<=0 or not math.isfinite(price) or entry<=0 or now_ts<=first:continue
+        pct=(price/entry-1)*100
+        age=now_ts-first
+        status='COMPLETE' if age>=72*3600 else 'TRACKING'
+        con.execute('UPDATE signal_outcomes SET last_seen=?,last_price=?,max_pct=?,min_pct=?,status=? WHERE id=?',(now_ts,price,max(hi,pct),min(lo,pct),status,id_))
+
+def record_outcomes(con,results,now_ts):
+    # One signal per market per UTC calendar day, preventing duplicate inflation.
+    day=datetime.fromtimestamp(now_ts,timezone.utc).strftime('%Y-%m-%d')
+    for r in results:
+        if r.get('status') not in ('READY','WATCH'):continue
+        entry=float(r.get('entry') or 0)
+        if entry<=0:continue
+        con.execute('INSERT OR IGNORE INTO signal_outcomes(market,day,first_seen,last_seen,entry,last_price,max_pct,min_pct,status,signal_type) VALUES(?,?,?,?,?,?,?,?,?,?)', (r['market'],day,now_ts,now_ts,entry,entry,0.,0.,'TRACKING',r.get('opportunity_tier','관찰')))
+
+def summarize_outcomes(con):
+    rows=con.execute("SELECT max_pct,min_pct FROM signal_outcomes WHERE status='COMPLETE'").fetchall()
+    return {'completed':len(rows),'hit_3':sum(x[0]>=3 for x in rows),'hit_10':sum(x[0]>=10 for x in rows),'hit_50':sum(x[0]>=50 for x in rows),'stopped_3':sum(x[1]<=-3 for x in rows),'note':'72시간 관찰가격 기준, 실거래 수익률·예측 정확도 아님. 서버 휴면 중 고저점 누락 가능'}
 
 def scan():
     errors=[];t0=time.time()
@@ -120,19 +176,11 @@ def scan():
         except Exception as e:errors.append('시세 일부 누락: '+str(e)[:120])
         time.sleep(.12)
     tickers=[x for x in tickers if x.get('market') in names and float(x.get('trade_price') or 0)>0]
-    # Select both liquid and pre-breakout candidates; do not equate selection with full-market candle coverage.
-    tickers.sort(key=lambda x:float(x.get('acc_trade_price_24h') or 0),reverse=True)
-    # Rotate deep analysis across liquid markets to avoid permanently ignoring smaller coins.
-    # A baseline liquid tranche is always checked; remaining slots rotate by scan number.
-    liquid=max(3,TOP//2)
-    baseline=tickers[:liquid]
-    remaining=tickers[liquid:]
-    cycle=int(time.time()//INTERVAL)
-    start=(cycle*max(1,TOP-liquid))%max(1,len(remaining))
-    rotation=(remaining[start:]+remaining[:start])[:max(0,TOP-liquid)]
-    chosen=baseline+rotation
+    with lock:
+        leaders=list(state.get('midnight',{}).get('leaders',[])) if state.get('midnight',{}).get('active') else []
+    chosen,sources=select_deep_markets(tickers,TOP,int(time.time()//INTERVAL),leaders)
     results=[]
-    with lock:state.update(status=f'심층 분석 중 (0/{len(chosen)})',market_count=len(tickers),deep_count=0)
+    with lock:state.update(status=f'심층 분석 중 (0/{len(chosen)})',market_count=len(tickers),deep_count=0,selection_details={k:sum(v==k for v in sources.values()) for k in set(sources.values())})
     for i,x in enumerate(chosen):
         m=x['market'];p=float(x['trade_price'])
         try:
@@ -140,15 +188,18 @@ def scan():
             c15=fetch_candles(m,15);time.sleep(.14)
             c60=fetch_candles(m,60);time.sleep(.14)
             r=analyze(c5,c15,c60,p,float(x.get('signed_change_rate') or 0)*100)
-            r.update(market=m,name=names[m],price=p,change24=round(float(x.get('signed_change_rate') or 0)*100,2),volume24=float(x.get('acc_trade_price_24h') or 0),time=int(time.time()))
+            r.update(selection_source=sources.get(m,'미확인'),market=m,name=names[m],price=p,change24=round(float(x.get('signed_change_rate') or 0)*100,2),volume24=float(x.get('acc_trade_price_24h') or 0),time=int(time.time()))
             results.append(r)
         except Exception as e:errors.append(m+': '+str(e)[:120])
         with lock:state.update(status=f'심층 분석 중 ({i+1}/{len(chosen)})',deep_count=i+1)
     results.sort(key=lambda x:(x.get('tier_rank',3),-x.get('score',0)))
     with sqlite3.connect(DB) as con:
+        update_outcomes(con,tickers,int(time.time()))
+        record_outcomes(con,results,int(time.time()))
+        summary=summarize_outcomes(con)
         con.executemany('INSERT INTO snapshots(ts,market,status,score,entry,stop,features,reason) VALUES(?,?,?,?,?,?,?,?)',[(r['time'],r['market'],r['status'],r.get('score',0),r.get('entry',0),r.get('stop',0),json.dumps(r.get('features',{})),','.join(r.get('risk',[])) or r.get('reason','')) for r in results])
     news=fetch_news()
-    with lock:state.update(status='대기',last_scan=int(time.time()),errors=errors[:30],candidates=results,news=news,news_updated=int(time.time()),scan_duration=round(time.time()-t0,1))
+    with lock:state.update(status='대기',last_scan=int(time.time()),errors=errors[:30],candidates=results,news=news,news_updated=int(time.time()),outcome_summary=summary,scan_duration=round(time.time()-t0,1))
 
 
 # KST 23:50–00:30: scan every 30 seconds. No new market session is assumed.
@@ -199,7 +250,7 @@ def midnight_loop():
                 baseline.clear();turnover.clear();baseline_day=session_day
             try:
                 leaders,count,errs=midnight_poll_once(baseline,turnover,now)
-                with lock:state['midnight']={'active':True,'status':'자정 집중 감시','last_check':int(time.time()),'baseline_time':session_day+' 23:50 KST (첫 관측 가격)','checked':count,'leaders':leaders,'errors':errs,'note':'첫 관측 가격 대비 실제 변화. 거래대금 증분은 24시간 이동합 기반 추정이며 순매수 아님. BUY 미검증.'}
+                with lock:state['midnight']={'active':True,'status':'자정 집중 감시','last_check':int(time.time()),'baseline_time':session_day+' 관측 시작 (실제 첫 수집 시각은 서버 실행에 따름)','checked':count,'leaders':leaders,'errors':errs,'note':'첫 관측 가격 대비 실제 변화. 거래대금 증분은 24시간 이동합 기반 추정이며 순매수 아님. BUY 미검증.'}
             except Exception as e:
                 with lock:state['midnight'].update(active=True,status='수집 오류',errors=[str(e)[:180]])
             time.sleep(30)
@@ -241,7 +292,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return
         if path=='/health':
-            data=json.dumps({'ok':True,'engine':'V33','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
+            data=json.dumps({'ok':True,'engine':'V35','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
         elif path=='/api/status':
             with lock: data=json.dumps(state,ensure_ascii=False).encode()
             typ='application/json; charset=utf-8'
@@ -256,5 +307,5 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 if __name__=='__main__':
     db_init();threading.Thread(target=loop,daemon=True).start();threading.Thread(target=midnight_loop,daemon=True).start()
-    print(f'V33 http://127.0.0.1:{PORT} (모의 관찰 전용; 자동매매 없음)',flush=True)
+    print(f'V35 http://127.0.0.1:{PORT} (모의 관찰 전용; 자동매매 없음)',flush=True)
     http.server.ThreadingHTTPServer(('0.0.0.0',PORT),Handler).serve_forever()
