@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""MY SIGNAL AI PRO V32: research-only Bithumb scanner, stdlib server."""
+"""MY SIGNAL AI PRO V33: research-only Bithumb scanner, stdlib server."""
 import json, os, time, math, sqlite3, threading, urllib.request, urllib.parse, http.server, pathlib, statistics, re, html, xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 ROOT=pathlib.Path(__file__).parent
 DATA_DIR=pathlib.Path(os.getenv("DATA_DIR",str(ROOT/"data")))
 DATA_DIR.mkdir(parents=True,exist_ok=True)
@@ -13,10 +13,10 @@ TOP=max(5,min(60,int(os.getenv('DEEP_MARKETS','25'))))
 BASE='https://api.bithumb.com'
 NEWS_FEEDS=[('CoinDesk','https://www.coindesk.com/arc/outboundfeeds/rss/'),('Cointelegraph','https://cointelegraph.com/rss')]
 lock=threading.Lock()
-state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V32','buy_enabled':False,'news_ai_enabled':False,'social_enabled':False}
+state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V33','buy_enabled':False,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
 
 def get_json(path):
-    req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V32/0.1','Accept':'application/json'})
+    req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V33/0.1','Accept':'application/json'})
     with urllib.request.urlopen(req,timeout=12) as res: result=json.load(res)
     if isinstance(result,dict) and result.get('error'):raise ValueError(str(result['error']))
     return result
@@ -83,7 +83,7 @@ def fetch_news():
     items=[]
     for source,url in NEWS_FEEDS:
         try:
-            req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 MY-SIGNAL-V32'})
+            req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 MY-SIGNAL-V33'})
             with urllib.request.urlopen(req,timeout=8) as r: raw=r.read(750000)
             root=ET.fromstring(raw)
             for item in root.findall('.//item')[:12]:
@@ -141,6 +141,63 @@ def scan():
     news=fetch_news()
     with lock:state.update(status='대기',last_scan=int(time.time()),errors=errors[:30],candidates=results,news=news,news_updated=int(time.time()),scan_duration=round(time.time()-t0,1))
 
+
+# KST 23:50–00:30: scan every 30 seconds. No new market session is assumed.
+# Baseline snapshots are taken before midnight, not from reset daily percentage fields.
+def midnight_active(now=None):
+    now=now or datetime.now(timezone(timedelta(hours=9)))
+    return now.hour==23 and now.minute>=50 or now.hour==0 and now.minute<30
+
+def midnight_poll_once(baseline, prev_turnover, now=None, getter=None):
+    now=now or datetime.now(timezone(timedelta(hours=9)))
+    getter=getter or get_json
+    markets=getter('/v1/market/all?isDetails=true')
+    allowed={x['market']:x.get('korean_name',x['market']) for x in markets if x.get('market','').startswith('KRW-') and not re.search('CAUTION|WARNING',str(x.get('market_warning','')),re.I)}
+    ticks=[];errs=[]
+    keys=list(allowed)
+    for i in range(0,len(keys),80):
+        try:
+            rows=getter('/v1/ticker?markets='+urllib.parse.quote(','.join(keys[i:i+80]),safe=','))
+            if isinstance(rows,list):ticks.extend(rows)
+        except Exception as e:errs.append(str(e)[:100])
+    results=[]
+    for x in ticks:
+        m=x.get('market')
+        if m not in allowed:continue
+        try:
+            price=float(x.get('trade_price') or 0);turnover=float(x.get('acc_trade_price_24h') or 0)
+            if not (math.isfinite(price) and math.isfinite(turnover) and price>0 and turnover>=0):continue
+            if m not in baseline:baseline[m]=price
+            old=baseline[m]
+            pct=(price/old-1)*100
+            # 24h rolling turnover can decline, so this is only a rough flow proxy.
+            flow=max(0,turnover-prev_turnover.get(m,turnover))
+            prev_turnover[m]=turnover
+            results.append({'market':m,'name':allowed[m],'price':price,'baseline':old,'move_pct':round(pct,2),'turnover_delta_est':round(flow),'turnover24':round(turnover),'signal':'OBSERVE','validated':False})
+        except (TypeError,ValueError,ZeroDivisionError):continue
+    results.sort(key=lambda x:(-x['move_pct'],-x['turnover_delta_est']))
+    return results[:20],len(results),errs
+
+def midnight_loop():
+    baseline={};turnover={};baseline_day=None
+    while True:
+        now=datetime.now(timezone(timedelta(hours=9)))
+        active=midnight_active(now)
+        if active:
+            # Keep one baseline for the window spanning 23:50 through 00:29.
+            session_day=(now.date() if now.hour==23 else (now-timedelta(days=1)).date()).isoformat()
+            if session_day!=baseline_day:
+                baseline.clear();turnover.clear();baseline_day=session_day
+            try:
+                leaders,count,errs=midnight_poll_once(baseline,turnover,now)
+                with lock:state['midnight']={'active':True,'status':'자정 집중 감시','last_check':int(time.time()),'baseline_time':session_day+' 23:50 KST (첫 관측 가격)','checked':count,'leaders':leaders,'errors':errs,'note':'첫 관측 가격 대비 실제 변화. 거래대금 증분은 24시간 이동합 기반 추정이며 순매수 아님. BUY 미검증.'}
+            except Exception as e:
+                with lock:state['midnight'].update(active=True,status='수집 오류',errors=[str(e)[:180]])
+            time.sleep(30)
+        else:
+            with lock:state['midnight']['active']=False;state['midnight']['status']='대기 (KST 23:50~00:30)'
+            time.sleep(30)
+
 def loop():
     while True:
         try:scan()
@@ -175,7 +232,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return
         if path=='/health':
-            data=json.dumps({'ok':True,'engine':'V32','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
+            data=json.dumps({'ok':True,'engine':'V33','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
         elif path=='/api/status':
             with lock: data=json.dumps(state,ensure_ascii=False).encode()
             typ='application/json; charset=utf-8'
@@ -189,6 +246,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self,*args):pass
 
 if __name__=='__main__':
-    db_init();threading.Thread(target=loop,daemon=True).start()
-    print(f'V32 http://127.0.0.1:{PORT} (모의 관찰 전용; 자동매매 없음)',flush=True)
+    db_init();threading.Thread(target=loop,daemon=True).start();threading.Thread(target=midnight_loop,daemon=True).start()
+    print(f'V33 http://127.0.0.1:{PORT} (모의 관찰 전용; 자동매매 없음)',flush=True)
     http.server.ThreadingHTTPServer(('0.0.0.0',PORT),Handler).serve_forever()
