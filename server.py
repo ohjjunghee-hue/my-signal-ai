@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MY SIGNAL AI PRO V29: research-only Bithumb scanner, stdlib server."""
+"""MY SIGNAL AI PRO V32: research-only Bithumb scanner, stdlib server."""
 import json, os, time, math, sqlite3, threading, urllib.request, urllib.parse, http.server, pathlib, statistics, re, html, xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 ROOT=pathlib.Path(__file__).parent
@@ -13,10 +13,10 @@ TOP=max(5,min(60,int(os.getenv('DEEP_MARKETS','25'))))
 BASE='https://api.bithumb.com'
 NEWS_FEEDS=[('CoinDesk','https://www.coindesk.com/arc/outboundfeeds/rss/'),('Cointelegraph','https://cointelegraph.com/rss')]
 lock=threading.Lock()
-state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V31','buy_enabled':False,'news_ai_enabled':False,'social_enabled':False}
+state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V32','buy_enabled':False,'news_ai_enabled':False,'social_enabled':False}
 
 def get_json(path):
-    req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V29/0.1','Accept':'application/json'})
+    req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V32/0.1','Accept':'application/json'})
     with urllib.request.urlopen(req,timeout=12) as res: result=json.load(res)
     if isinstance(result,dict) and result.get('error'):raise ValueError(str(result['error']))
     return result
@@ -77,13 +77,13 @@ def analyze(c5,c15,c60,price,change24=0):
     stop=min(x['l'] for x in a[-6:])
     if stop>=entry or (entry-stop)/entry*100>8:stop=entry-max(1.5*atr,entry*.025)
     riskpct=max(0,(entry-stop)/entry*100)
-    return {'status':status,'score':score,'entry':entry,'stop':round(stop,8),'stop_pct':round(riskpct,2),'targets':[round(entry*x,8) for x in (1.03,1.10,1.50)],'target_note':'관찰 목표 +3/+10/+50%; 실현 가능성 검증 전','risk':risk,'reason':('초기 거래량·추세 조건 관찰' if early else '초기 상승 조건 미충족'),'features':{'vol_ratio':round(vol,2),'rise5_pct':round(rise5,2),'rise8_pct':round(rise8,2),'atr_pct':round(atr_pct,2),'compression_pct':round(compression,2),'resistance':round(resistance,8),'resistance_distance_pct':round(dist,2),'candle_strength':round(candle_strength,2),'trend5_15':trend,'trend60':higher}}
+    return {'status':status,'score':score,'entry':entry,'stop':round(stop,8),'stop_pct':round(riskpct,2),'targets':[round(entry*x,8) for x in (1.03,1.10,1.50)],'tp_levels':[{'price':round(entry+max(entry-stop,entry*.005)*mult,8),'pct':round(max(entry-stop,entry*.005)*mult/entry*100,2)} for mult in (1,1.5,2)],'decision':'WAIT' if status=='WAIT' else 'REJECT' if status=='DATA' else 'OBSERVE','decision_reason':('위험 조건 감지: '+', '.join(risk)) if risk else ('확정봉 부족' if status=='DATA' else '실거래 BUY 신호 미검증: 관찰 전용'),'target_note':'관찰 목표 +3/+10/+50%; 실현 가능성 검증 전','risk':risk,'reason':('초기 거래량·추세 조건 관찰' if early else '초기 상승 조건 미충족'),'features':{'vol_ratio':round(vol,2),'rise5_pct':round(rise5,2),'rise8_pct':round(rise8,2),'atr_pct':round(atr_pct,2),'compression_pct':round(compression,2),'resistance':round(resistance,8),'resistance_distance_pct':round(dist,2),'candle_strength':round(candle_strength,2),'trend5_15':trend,'trend60':higher}}
 
 def fetch_news():
     items=[]
     for source,url in NEWS_FEEDS:
         try:
-            req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 MY-SIGNAL-V29'})
+            req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 MY-SIGNAL-V32'})
             with urllib.request.urlopen(req,timeout=8) as r: raw=r.read(750000)
             root=ET.fromstring(raw)
             for item in root.findall('.//item')[:12]:
@@ -135,7 +135,7 @@ def scan():
             results.append(r)
         except Exception as e:errors.append(m+': '+str(e)[:120])
         with lock:state.update(status=f'심층 분석 중 ({i+1}/{len(chosen)})',deep_count=i+1)
-    results.sort(key=lambda x:({'READY':0,'WATCH':1,'WAIT':2,'DATA':3}.get(x['status'],4),-x.get('score',0)))
+    results.sort(key=lambda x:-x.get('score',0))
     with sqlite3.connect(DB) as con:
         con.executemany('INSERT INTO snapshots(ts,market,status,score,entry,stop,features,reason) VALUES(?,?,?,?,?,?,?,?)',[(r['time'],r['market'],r['status'],r.get('score',0),r.get('entry',0),r.get('stop',0),json.dumps(r.get('features',{})),','.join(r.get('risk',[])) or r.get('reason','')) for r in results])
     news=fetch_news()
@@ -175,7 +175,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return
         if path=='/health':
-            data=json.dumps({'ok':True,'engine':'V31','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
+            data=json.dumps({'ok':True,'engine':'V32','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
         elif path=='/api/status':
             with lock: data=json.dumps(state,ensure_ascii=False).encode()
             typ='application/json; charset=utf-8'
@@ -190,5 +190,5 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 if __name__=='__main__':
     db_init();threading.Thread(target=loop,daemon=True).start()
-    print(f'V29 http://127.0.0.1:{PORT} (모의 관찰 전용; 자동매매 없음)',flush=True)
+    print(f'V32 http://127.0.0.1:{PORT} (모의 관찰 전용; 자동매매 없음)',flush=True)
     http.server.ThreadingHTTPServer(('0.0.0.0',PORT),Handler).serve_forever()
