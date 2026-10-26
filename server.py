@@ -13,7 +13,7 @@ TOP=max(5,min(60,int(os.getenv('DEEP_MARKETS','25'))))
 BASE='https://api.bithumb.com'
 NEWS_FEEDS=[('CoinDesk','https://www.coindesk.com/arc/outboundfeeds/rss/'),('Cointelegraph','https://cointelegraph.com/rss')]
 lock=threading.Lock()
-state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V33','buy_enabled':False,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
+state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V34','buy_enabled':False,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
 
 def get_json(path):
     req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V33/0.1','Accept':'application/json'})
@@ -77,7 +77,16 @@ def analyze(c5,c15,c60,price,change24=0):
     stop=min(x['l'] for x in a[-6:])
     if stop>=entry or (entry-stop)/entry*100>8:stop=entry-max(1.5*atr,entry*.025)
     riskpct=max(0,(entry-stop)/entry*100)
-    return {'status':status,'score':score,'entry':entry,'stop':round(stop,8),'stop_pct':round(riskpct,2),'targets':[round(entry*x,8) for x in (1.03,1.10,1.50)],'tp_levels':[{'price':round(entry+max(entry-stop,entry*.005)*mult,8),'pct':round(max(entry-stop,entry*.005)*mult/entry*100,2)} for mult in (1,1.5,2)],'decision':'WAIT' if status=='WAIT' else 'REJECT' if status=='DATA' else 'OBSERVE','decision_reason':('위험 조건 감지: '+', '.join(risk)) if risk else ('확정봉 부족' if status=='DATA' else '실거래 BUY 신호 미검증: 관찰 전용'),'target_note':'관찰 목표 +3/+10/+50%; 실현 가능성 검증 전','risk':risk,'reason':('초기 거래량·추세 조건 관찰' if early else '초기 상승 조건 미충족'),'features':{'vol_ratio':round(vol,2),'rise5_pct':round(rise5,2),'rise8_pct':round(rise8,2),'atr_pct':round(atr_pct,2),'compression_pct':round(compression,2),'resistance':round(resistance,8),'resistance_distance_pct':round(dist,2),'candle_strength':round(candle_strength,2),'trend5_15':trend,'trend60':higher}}
+    # Heuristic opportunity tiers are NOT predicted returns or validated probabilities.
+    breakout_setup=(compression<=8 and .9<=vol<=4.5 and trend and higher and rise8<7 and change24<=15)
+    if breakout_setup and candle_strength>=.55 and not risk:
+        tier='50%+ 급등 전조 관찰';tier_rank=0;horizon='수일 이상 · 기간/도달 미검증'
+    elif trend and higher and vol>=1.3 and rise8<9 and change24<=20 and len(risk)<=1:
+        tier='10~30% 상승 관찰';tier_rank=1;horizon='2~3일 · 도달 미검증'
+    else:
+        tier='3~10% 단기 관찰';tier_rank=2;horizon='단기 · 도달 미검증'
+    medium_targets=[{'pct':pct,'price':round(entry*(1+pct/100),8)} for pct in ((10,30,50) if tier_rank==0 else (10,20,30) if tier_rank==1 else (3,5,10))]
+    return {'status':status,'score':score,'opportunity_tier':tier,'tier_rank':tier_rank,'horizon_note':horizon,'medium_targets':medium_targets,'tier_disclaimer':'기술적 조건 분류일 뿐 목표 도달 예측이나 매수 추천 아님','entry':entry,'stop':round(stop,8),'stop_pct':round(riskpct,2),'targets':[round(entry*x,8) for x in (1.03,1.10,1.50)],'tp_levels':[{'price':round(entry+max(entry-stop,entry*.005)*mult,8),'pct':round(max(entry-stop,entry*.005)*mult/entry*100,2)} for mult in (1,1.5,2)],'decision':'WAIT' if status=='WAIT' else 'REJECT' if status=='DATA' else 'OBSERVE','decision_reason':('위험 조건 감지: '+', '.join(risk)) if risk else ('확정봉 부족' if status=='DATA' else '실거래 BUY 신호 미검증: 관찰 전용'),'target_note':'관찰 목표 +3/+10/+50%; 실현 가능성 검증 전','risk':risk,'reason':('초기 거래량·추세 조건 관찰' if early else '초기 상승 조건 미충족'),'features':{'vol_ratio':round(vol,2),'rise5_pct':round(rise5,2),'rise8_pct':round(rise8,2),'atr_pct':round(atr_pct,2),'compression_pct':round(compression,2),'resistance':round(resistance,8),'resistance_distance_pct':round(dist,2),'candle_strength':round(candle_strength,2),'trend5_15':trend,'trend60':higher}}
 
 def fetch_news():
     items=[]
@@ -135,7 +144,7 @@ def scan():
             results.append(r)
         except Exception as e:errors.append(m+': '+str(e)[:120])
         with lock:state.update(status=f'심층 분석 중 ({i+1}/{len(chosen)})',deep_count=i+1)
-    results.sort(key=lambda x:-x.get('score',0))
+    results.sort(key=lambda x:(x.get('tier_rank',3),-x.get('score',0)))
     with sqlite3.connect(DB) as con:
         con.executemany('INSERT INTO snapshots(ts,market,status,score,entry,stop,features,reason) VALUES(?,?,?,?,?,?,?,?)',[(r['time'],r['market'],r['status'],r.get('score',0),r.get('entry',0),r.get('stop',0),json.dumps(r.get('features',{})),','.join(r.get('risk',[])) or r.get('reason','')) for r in results])
     news=fetch_news()
