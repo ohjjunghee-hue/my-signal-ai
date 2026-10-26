@@ -13,7 +13,7 @@ TOP=max(5,min(60,int(os.getenv('DEEP_MARKETS','25'))))
 BASE='https://api.bithumb.com'
 NEWS_FEEDS=[('CoinDesk','https://www.coindesk.com/arc/outboundfeeds/rss/'),('Cointelegraph','https://cointelegraph.com/rss')]
 lock=threading.Lock()
-state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V35','selection_details':{},'outcome_summary':{},'buy_enabled':False,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
+state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V36-AUDIT','selection_details':{},'outcome_summary':{},'market_audit':[],'audit_updated':None,'buy_enabled':False,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
 
 def get_json(path):
     req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V35/0.1','Accept':'application/json'})
@@ -107,6 +107,13 @@ def db_init():
         con.execute('CREATE TABLE IF NOT EXISTS snapshots(id INTEGER PRIMARY KEY,ts INTEGER,market TEXT,status TEXT,score INTEGER,entry REAL,stop REAL,features TEXT,reason TEXT)')
         con.execute('CREATE INDEX IF NOT EXISTS ix_market_time ON snapshots(market,ts)')
         con.execute('CREATE TABLE IF NOT EXISTS signal_outcomes(id INTEGER PRIMARY KEY,market TEXT,day TEXT,first_seen INTEGER,last_seen INTEGER,entry REAL,last_price REAL,max_pct REAL,min_pct REAL,status TEXT,signal_type TEXT,UNIQUE(market,day))')
+        # Safe additive migration: existing signal records remain untouched.
+        cols={row[1] for row in con.execute('PRAGMA table_info(signal_outcomes)')}
+        for name,typ in [('first_change24','REAL'),('first_score','INTEGER'),('first_source','TEXT'),('first_class','TEXT'),('observations','INTEGER DEFAULT 0')]:
+            if name not in cols:con.execute(f'ALTER TABLE signal_outcomes ADD COLUMN {name} {typ}')
+        con.execute('CREATE TABLE IF NOT EXISTS market_audit(id INTEGER PRIMARY KEY, ts INTEGER, market TEXT, price REAL, change24 REAL, turnover24 REAL, analysis_status TEXT, selection_source TEXT)')
+        con.execute('CREATE INDEX IF NOT EXISTS ix_audit_market_ts ON market_audit(market,ts)')
+
 
 def select_deep_markets(tickers, top, cycle, midnight_leaders=None):
     """Bounded selection with liquid baseline, midnight leaders and rotation.
@@ -148,16 +155,55 @@ def update_outcomes(con, tickers, now_ts):
         pct=(price/entry-1)*100
         age=now_ts-first
         status='COMPLETE' if age>=72*3600 else 'TRACKING'
-        con.execute('UPDATE signal_outcomes SET last_seen=?,last_price=?,max_pct=?,min_pct=?,status=? WHERE id=?',(now_ts,price,max(hi,pct),min(lo,pct),status,id_))
+        con.execute('UPDATE signal_outcomes SET last_seen=?,last_price=?,max_pct=?,min_pct=?,status=?,observations=COALESCE(observations,0)+1 WHERE id=?',(now_ts,price,max(hi,pct),min(lo,pct),status,id_))
+
+def classify_first_signal(change24):
+    """Classification uses information available at first observation, not future candles."""
+    if change24 is None:return '기준정보 없음'
+    if not math.isfinite(change24):return '기준정보 없음'
+    if change24>=10:return '이미 +10% 이상 상승 후 발견'
+    if change24>=3:return '이미 +3% 이상 상승 후 발견'
+    return '초기 관찰 (사전 적중 미확정)'
 
 def record_outcomes(con,results,now_ts):
-    # One signal per market per UTC calendar day, preventing duplicate inflation.
+    # Preserve existing first_seen and first_change24; never overwrite on later scans.
     day=datetime.fromtimestamp(now_ts,timezone.utc).strftime('%Y-%m-%d')
     for r in results:
         if r.get('status') not in ('READY','WATCH'):continue
         entry=float(r.get('entry') or 0)
         if entry<=0:continue
-        con.execute('INSERT OR IGNORE INTO signal_outcomes(market,day,first_seen,last_seen,entry,last_price,max_pct,min_pct,status,signal_type) VALUES(?,?,?,?,?,?,?,?,?,?)', (r['market'],day,now_ts,now_ts,entry,entry,0.,0.,'TRACKING',r.get('opportunity_tier','관찰')))
+        change=r.get('change24')
+        try:change=float(change) if change is not None else None
+        except (ValueError,TypeError):change=None
+        classification=classify_first_signal(change)
+        con.execute('INSERT OR IGNORE INTO signal_outcomes(market,day,first_seen,last_seen,entry,last_price,max_pct,min_pct,status,signal_type,first_change24,first_score,first_source,first_class,observations) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (r['market'],day,now_ts,now_ts,entry,entry,0.,0.,'TRACKING',r.get('opportunity_tier','관찰'),change,r.get('score'),r.get('selection_source',''),classification,0))
+
+def audit_market_tickers(con,tickers,results,now_ts):
+    """All-market ticker comparison, NOT a claim of full-market candle analysis."""
+    by_market={r['market']:r for r in results}
+    ranked=sorted(tickers,key=lambda x:float(x.get('signed_change_rate') or 0),reverse=True)
+    audit=[]
+    for x in ranked[:30]:
+        m=x['market'];r=by_market.get(m)
+        ch=round(float(x.get('signed_change_rate') or 0)*100,2)
+        audit.append({'market':m,'price':float(x.get('trade_price') or 0),'change24':ch,'deep_analyzed':r is not None,'analysis_status':r.get('status') if r else '미분석','selection_source':r.get('selection_source','') if r else '심층 분석 대상 밖','note':'24시간 등락률 기준. 급등 전 발견 여부는 과거 신호 기록으로 별도 판정'})
+        con.execute('INSERT INTO market_audit(ts,market,price,change24,turnover24,analysis_status,selection_source) VALUES(?,?,?,?,?,?,?)',(now_ts,m,audit[-1]['price'],ch,float(x.get('acc_trade_price_24h') or 0),audit[-1]['analysis_status'],audit[-1]['selection_source']))
+    con.execute('DELETE FROM market_audit WHERE ts < ?', (now_ts-7*86400,))
+    return audit
+
+def get_audit_rows(con,limit=100):
+    rows=con.execute('SELECT market,first_seen,last_seen,entry,last_price,max_pct,min_pct,status,signal_type,first_change24,first_score,first_source,first_class,observations FROM signal_outcomes ORDER BY first_seen DESC LIMIT ?', (limit,)).fetchall()
+    cols=('market','first_seen','last_seen','entry','last_price','max_pct','min_pct','status','signal_type','first_change24','first_score','first_source','first_class','observations')
+    out=[]
+    for row in rows:
+        d=dict(zip(cols,row))
+        # Legacy entries lack the contemporaneous change: cannot be retroactively validated.
+        d['verdict']='기록 부족' if not d['first_class'] or d['first_class']=='기준정보 없음' else ('후행 발견' if d['first_class'].startswith('이미') else '초기 관찰 · 성과 미확정')
+        d['hit_3']=bool(d['max_pct'] is not None and d['max_pct']>=3)
+        d['hit_10']=bool(d['max_pct'] is not None and d['max_pct']>=10)
+        d['hit_50']=bool(d['max_pct'] is not None and d['max_pct']>=50)
+        out.append(d)
+    return out
 
 def summarize_outcomes(con):
     rows=con.execute("SELECT max_pct,min_pct FROM signal_outcomes WHERE status='COMPLETE'").fetchall()
@@ -197,9 +243,10 @@ def scan():
         update_outcomes(con,tickers,int(time.time()))
         record_outcomes(con,results,int(time.time()))
         summary=summarize_outcomes(con)
+        market_audit=audit_market_tickers(con,tickers,results,int(time.time()))
         con.executemany('INSERT INTO snapshots(ts,market,status,score,entry,stop,features,reason) VALUES(?,?,?,?,?,?,?,?)',[(r['time'],r['market'],r['status'],r.get('score',0),r.get('entry',0),r.get('stop',0),json.dumps(r.get('features',{})),','.join(r.get('risk',[])) or r.get('reason','')) for r in results])
     news=fetch_news()
-    with lock:state.update(status='대기',last_scan=int(time.time()),errors=errors[:30],candidates=results,news=news,news_updated=int(time.time()),outcome_summary=summary,scan_duration=round(time.time()-t0,1))
+    with lock:state.update(status='대기',last_scan=int(time.time()),errors=errors[:30],candidates=results,news=news,news_updated=int(time.time()),outcome_summary=summary,market_audit=market_audit,audit_updated=int(time.time()),scan_duration=round(time.time()-t0,1))
 
 
 # KST 23:50–00:30: scan every 30 seconds. No new market session is assumed.
@@ -363,7 +410,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return
         if path=='/health':
-            data=json.dumps({'ok':True,'engine':'INTEGRATED','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
+            data=json.dumps({'ok':True,'engine':'V36-AUDIT','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
         elif path=='/api/status':
             with lock: data=json.dumps(state,ensure_ascii=False).encode()
             typ='application/json; charset=utf-8'
@@ -379,6 +426,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 data=json.dumps({'error':'캔들 데이터 조회 실패: '+str(e)[:140]},ensure_ascii=False).encode();typ='application/json; charset=utf-8'
                 self.send_response(502);self.send_header('Content-Type',typ);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+        elif path=='/api/audit':
+            with sqlite3.connect(DB) as con:
+                rows=get_audit_rows(con)
+            data=json.dumps({'rows':rows,'note':'첫 관찰 시점 기준. 과거 데이터가 없는 기존 기록은 검증 불가. 가격 샘플 사이 고저점 누락 가능.'},ensure_ascii=False).encode();typ='application/json; charset=utf-8'
         elif path=='/api/outcomes':
             with sqlite3.connect(DB) as con:
                 rows=con.execute('SELECT market,first_seen,last_seen,entry,last_price,max_pct,min_pct,status,signal_type FROM signal_outcomes ORDER BY first_seen DESC LIMIT 100').fetchall()
