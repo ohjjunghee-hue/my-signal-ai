@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MY SIGNAL AI PRO V39: research-only Bithumb scanner, stdlib server."""
+"""MY SIGNAL AI PRO V41: research-only Bithumb scanner, stdlib server."""
 import json, os, time, math, sqlite3, threading, urllib.request, urllib.parse, http.server, pathlib, statistics, re, html, xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 ROOT=pathlib.Path(__file__).parent
@@ -13,10 +13,10 @@ TOP=max(5,min(80,int(os.getenv('DEEP_MARKETS','40'))))
 BASE='https://api.bithumb.com'
 NEWS_FEEDS=[('CoinDesk','https://www.coindesk.com/arc/outboundfeeds/rss/'),('Cointelegraph','https://cointelegraph.com/rss')]
 lock=threading.Lock()
-state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V39-EVENTS','selection_details':{},'outcome_summary':{},'market_audit':[],'market_leaders':[],'tracked':[],'setup_events':[],'market_updated':None,'audit_updated':None,'buy_enabled':True,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
+state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V41-MOMENTUM','selection_details':{},'outcome_summary':{},'market_audit':[],'market_leaders':[],'tracked':[],'setup_events':[],'market_updated':None,'momentum':[],'momentum_updated':None,'audit_updated':None,'buy_enabled':True,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
 
 def get_json(path):
-    req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V35/0.1','Accept':'application/json'})
+    req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V40/0.1','Accept':'application/json'})
     with urllib.request.urlopen(req,timeout=12) as res: result=json.load(res)
     if isinstance(result,dict) and result.get('error'):raise ValueError(str(result['error']))
     return result
@@ -40,6 +40,34 @@ def ema(xs,p):
     v=xs[0];k=2/(p+1)
     for x in xs[1:]:v+=(x-v)*k
     return v
+
+def opportunity_targets(entry, stop, atr_pct, resistance, vol_ratio, compression, trend, higher, risk, change24, rise8):
+    """Risk-first *scenario* targets; never confuse displayed upside with a forecast.
+
+    Reject tight-RR setups rather than manufacturing attractive targets from ATR.
+    The upside bands are explicit scenario thresholds, not probabilities.
+    """
+    if not all(math.isfinite(x) for x in (entry,stop,atr_pct,resistance,vol_ratio,compression,change24,rise8)) or entry<=0:
+        return {'eligible':False,'reason':'가격 데이터 오류','levels':[],'upside_pct':0,'rr':0,'risk_pct':0}
+    risk_pct=max(0,(entry-stop)/entry*100)
+    if stop>=entry or risk_pct<.5 or risk_pct>8:
+        return {'eligible':False,'reason':'손절 거리 비정상','levels':[],'upside_pct':0,'rr':0,'risk_pct':round(risk_pct,2)}
+    # Do not use price gain as proof of future upside. Require independently observable setup.
+    if risk or not (trend and higher) or vol_ratio<1.3 or compression>12 or change24>15 or rise8>7:
+        return {'eligible':False,'reason':'추세·거래량·과열 필터 미충족','levels':[],'upside_pct':0,'rr':0,'risk_pct':round(risk_pct,2)}
+    if resistance>entry and (resistance/entry-1)*100<max(1.5,atr_pct):
+        return {'eligible':False,'reason':'근접 저항으로 상승 여력 불충분','levels':[],'upside_pct':0,'rr':0,'risk_pct':round(risk_pct,2)}
+    # Structural screening only; the target levels remain unvalidated scenarios.
+    if compression<=6 and vol_ratio>=2.0 and change24<8:
+        pct=[10,20,50];grade='급등 확장 시나리오'
+    elif compression<=10 and vol_ratio>=1.5 and change24<12:
+        pct=[5,10,20];grade='중기 상승 시나리오'
+    else:
+        pct=[3,5,10];grade='단기 상승 시나리오'
+    rr=pct[0]/risk_pct
+    if rr<1.5:
+        return {'eligible':False,'reason':'1차 목표 대비 손익비 1.5 미만','levels':[],'upside_pct':pct[-1],'rr':round(rr,2),'risk_pct':round(risk_pct,2)}
+    return {'eligible':True,'reason':grade+' · 목표 달성 가능성 미검증','levels':[{'price':round(entry*(1+x/100),8),'pct':x} for x in pct],'upside_pct':pct[-1],'rr':round(rr,2),'risk_pct':round(risk_pct,2)}
 
 def analyze(c5,c15,c60,price,change24=0):
     if min(map(len,(c5,c15,c60)))<35:return {'status':'DATA','reason':'확정봉 부족'}
@@ -85,16 +113,30 @@ def analyze(c5,c15,c60,price,change24=0):
     stop=min(x['l'] for x in a[-6:])
     if stop>=entry or (entry-stop)/entry*100>8:stop=entry-max(1.5*atr,entry*.025)
     riskpct=max(0,(entry-stop)/entry*100)
-    # Heuristic opportunity tiers are NOT predicted returns or validated probabilities.
-    breakout_setup=(compression<=8 and .9<=vol<=4.5 and trend and higher and rise8<7 and change24<=15)
-    if breakout_setup and candle_strength>=.55 and not risk:
-        tier='50%+ 급등 전조 관찰';tier_rank=0;horizon='수일 이상 · 기간/도달 미검증'
-    elif trend and higher and vol>=1.3 and rise8<9 and change24<=20 and len(risk)<=1:
-        tier='10~30% 상승 관찰';tier_rank=1;horizon='2~3일 · 도달 미검증'
+    opportunity=opportunity_targets(entry,stop,atr_pct,resistance,vol,compression,trend,higher,risk,change24,rise8)
+    if opportunity['eligible']:
+        tier=opportunity['reason'].split(' · ')[0]
+        tier_rank=0 if opportunity['upside_pct']>=50 else 1 if opportunity['upside_pct']>=20 else 2
+        medium_targets=opportunity['levels']
     else:
-        tier='3~10% 단기 관찰';tier_rank=2;horizon='단기 · 도달 미검증'
-    medium_targets=[{'pct':pct,'price':round(entry*(1+pct/100),8)} for pct in ((10,30,50) if tier_rank==0 else (10,20,30) if tier_rank==1 else (3,5,10))]
-    return {'status':status,'score':score,'opportunity_tier':tier,'tier_rank':tier_rank,'horizon_note':horizon,'medium_targets':medium_targets,'tier_disclaimer':'기술적 조건 분류일 뿐 목표 도달 예측이나 매수 추천 아님','entry':entry,'stop':round(stop,8),'stop_pct':round(riskpct,2),'targets':[round(entry*x,8) for x in (1.03,1.10,1.50)],'tp_levels':[{'price':round(entry+max(entry-stop,entry*.005)*mult,8),'pct':round(max(entry-stop,entry*.005)*mult/entry*100,2)} for mult in (1,1.5,2)],'decision':'BUY' if status=='BUY' else 'PRE' if status=='PRE' else 'WAIT' if status=='WAIT' else 'OBSERVE','decision_reason':('확정 5분봉 저항 돌파 + 거래량 1.3배 + 다중 추세 일치 (기술 신호, 수익 미검증)' if status=='BUY' else '추세·압축·거래량 조건 충족 (매수 아님)' if status=='PRE' else ('위험 조건 감지: '+', '.join(risk)) if risk else '진입 조건 미충족'),'target_note':'관찰 목표 +3/+10/+50%; 실현 가능성 검증 전','risk':risk,'reason':('초기 거래량·추세 조건 관찰' if early else '초기 상승 조건 미충족'),'features':{'vol_ratio':round(vol,2),'breakout_confirmed':confirmed_breakout,'rise5_pct':round(rise5,2),'rise8_pct':round(rise8,2),'atr_pct':round(atr_pct,2),'compression_pct':round(compression,2),'resistance':round(resistance,8),'resistance_distance_pct':round(dist,2),'candle_strength':round(candle_strength,2),'trend5_15':trend,'trend60':higher}}
+        tier='추천 제외 · 관찰만';tier_rank=3;medium_targets=[]
+        # A technical BUY breakout without adequate upside/RR is NOT a buy candidate.
+        if status in ('BUY','PRE','READY'):status='WAIT'
+    decision='BUY' if status=='BUY' else 'PRE' if status=='PRE' else 'WAIT' if status=='WAIT' else 'OBSERVE'
+    return {'status':status,'score':score,'opportunity_tier':tier,'tier_rank':tier_rank,
+      'horizon_note':'상승 시나리오 · 기간 및 도달 미검증',
+      'medium_targets':medium_targets,'tier_disclaimer':'목표는 가정된 가격 구간이며 예측이나 수익 보장이 아님',
+      'entry':entry,'stop':round(stop,8),'stop_pct':round(riskpct,2),
+      'targets':[t['price'] for t in medium_targets],
+      'tp_levels':medium_targets,'opportunity':opportunity,'decision':decision,
+      'decision_reason':('확정봉 돌파·거래량·추세 확인' if status=='BUY' else '초기 상승 준비 신호' if status=='PRE' else opportunity['reason']),
+      'target_note':'시나리오 목표 · 저항/손익비/과열 조건 검토 · 목표 도달 확률 미검증',
+      'risk':risk,'reason':('초기 거래량·추세 조건 관찰' if early else '초기 상승 조건 미충족'),
+      'features':{'vol_ratio':round(vol,2),'breakout_confirmed':confirmed_breakout,
+      'rise5_pct':round(rise5,2),'rise8_pct':round(rise8,2),'atr_pct':round(atr_pct,2),
+      'compression_pct':round(compression,2),'resistance':round(resistance,8),
+      'resistance_distance_pct':round(dist,2),'candle_strength':round(candle_strength,2),
+      'trend5_15':trend,'trend60':higher}}
 
 def fetch_news():
     items=[]
@@ -135,6 +177,11 @@ def db_init():
             previous TEXT,new_status TEXT NOT NULL,price REAL NOT NULL,
             reason TEXT NOT NULL,UNIQUE(market,ts,new_status))""")
         con.execute('CREATE INDEX IF NOT EXISTS ix_setup_events_market_ts ON setup_events(market,ts DESC)')
+        con.execute('''CREATE TABLE IF NOT EXISTS pulse_samples(
+            market TEXT NOT NULL, ts INTEGER NOT NULL, price REAL NOT NULL,
+            turnover24 REAL NOT NULL, change24 REAL NOT NULL,
+            PRIMARY KEY(market,ts))''')
+        con.execute('CREATE INDEX IF NOT EXISTS ix_pulse_ts ON pulse_samples(ts)')
 
 
 def tracked_priority(con, now_ts, limit=32):
@@ -330,6 +377,63 @@ def get_audit_rows(con,limit=100):
 def summarize_outcomes(con):
     rows=con.execute("SELECT max_pct,min_pct FROM signal_outcomes WHERE status='COMPLETE'").fetchall()
     return {'completed':len(rows),'hit_3':sum(x[0]>=3 for x in rows),'hit_10':sum(x[0]>=10 for x in rows),'hit_50':sum(x[0]>=50 for x in rows),'stopped_3':sum(x[1]<=-3 for x in rows),'note':'72시간 관찰가격 기준, 실거래 수익률·예측 정확도 아님. 서버 휴면 중 고저점 누락 가능'}
+
+def momentum_from_samples(previous, current, minutes):
+    """Return observable price and 24h rolling turnover differences, not trade flow.
+
+    A difference of 24h cumulative turnover is NOT exact traded value over the
+    sample interval because the 24h window also drops older trades.
+    """
+    if not previous or minutes<=0 or minutes>15:return None
+    oldprice,oldturn=previous
+    price,turn=current
+    if min(oldprice,price)<=0:return None
+    pct=100*(price/oldprice-1)
+    turnover_delta=turn-oldturn
+    return {'change_pct':round(pct,3),'turnover24_delta':round(turnover_delta),
+            'minutes':round(minutes,2),'acceleration_pct_per_min':round(pct/minutes,4),
+            'turnover_note':'24시간 이동창 거래대금 차이 · 순매수액 아님'}
+
+def pulse_once(now_ts=None, getter=None):
+    """Low-cost all-market early movement monitor; independent of deep scan.
+
+    It is NOT a WebSocket or order-book/transaction stream.
+    """
+    now_ts=int(now_ts or time.time()); getter=getter or get_json
+    markets=getter('/v1/market/all?isDetails=true')
+    keys=[x['market'] for x in markets if x.get('market','').startswith('KRW-') and
+          not re.search('CAUTION|WARNING',str(x.get('market_warning','')),re.I)]
+    rows=[]
+    for i in range(0,len(keys),80):
+        part=getter('/v1/ticker?markets='+urllib.parse.quote(','.join(keys[i:i+80]),safe=','))
+        if isinstance(part,list):rows.extend(part)
+    rows=[x for x in rows if x.get('market') in keys and float(x.get('trade_price') or 0)>0]
+    with sqlite3.connect(DB) as con:
+        old={m:(p,t,v) for m,p,t,v in con.execute("""SELECT s.market,s.price,s.turnover24,s.ts
+            FROM pulse_samples s JOIN (SELECT market,MAX(ts) AS ts FROM pulse_samples
+            WHERE ts<=? GROUP BY market) z ON z.market=s.market AND z.ts=s.ts""",(now_ts-45,))}
+        found=[]
+        for x in rows:
+            m=x['market'];price=float(x['trade_price']);turn=float(x.get('acc_trade_price_24h') or 0)
+            previous=old.get(m)
+            v=momentum_from_samples(previous[:2],(price,turn),(now_ts-previous[2])/60) if previous else None
+            if v:
+                v.update(market=m,price=price,change24=round(100*float(x.get('signed_change_rate') or 0),2),sample_time=now_ts)
+                # Display all rising movers without labelling them BUY or 'whale accumulation'.
+                if v['change_pct']>=.25:found.append(v)
+            con.execute('INSERT OR REPLACE INTO pulse_samples VALUES(?,?,?,?,?)',
+                        (m,now_ts,price,turn,100*float(x.get('signed_change_rate') or 0)))
+        con.execute('DELETE FROM pulse_samples WHERE ts<?',(now_ts-86400,))
+    found.sort(key=lambda x:x['acceleration_pct_per_min'],reverse=True)
+    with lock:state.update(momentum=found[:40],momentum_updated=now_ts)
+    return found
+
+def pulse_loop():
+    while True:
+        try:pulse_once()
+        except Exception as e:
+            with lock:state['errors']=(state.get('errors',[])+['빠른 시장 감시: '+str(e)[:120]])[-30:]
+        time.sleep(max(45,int(os.getenv('PULSE_SECONDS','60'))))
 
 def scan():
     errors=[];t0=time.time()
@@ -539,7 +643,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return
         if path=='/health':
-            data=json.dumps({'ok':True,'engine':'V39-EVENTS','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
+            data=json.dumps({'ok':True,'engine':'V41-MOMENTUM','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
         elif path=='/api/status':
             with lock: data=json.dumps(state,ensure_ascii=False).encode()
             typ='application/json; charset=utf-8'
@@ -561,6 +665,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path=='/api/tracked':
             with sqlite3.connect(DB) as con:rows=read_setups(con,int(time.time()))
             data=json.dumps({'rows':rows,'note':'최초 관찰가 대비 변화. BUY는 기술 조건 신호이며 수익성 미검증. 오래된 분석은 별도 표시.'},ensure_ascii=False).encode();typ='application/json; charset=utf-8'
+        elif path=='/api/momentum':
+            with lock: rows=list(state['momentum']);ts=state['momentum_updated']
+            data=json.dumps({'rows':rows,'updated':ts,'note':'45~900초 간격 시세 비교. BUY 신호가 아니며 호가·실제 체결 흐름 분석 아님'},ensure_ascii=False).encode();typ='application/json; charset=utf-8'
         elif path=='/api/audit':
             with sqlite3.connect(DB) as con:
                 rows=get_audit_rows(con)
@@ -579,6 +686,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self,*args):pass
 
 if __name__=='__main__':
-    db_init();threading.Thread(target=loop,daemon=True).start();threading.Thread(target=midnight_loop,daemon=True).start()
-    print(f'V35 http://127.0.0.1:{PORT} (모의 관찰 전용; 자동매매 없음)',flush=True)
+    db_init();threading.Thread(target=loop,daemon=True).start();threading.Thread(target=midnight_loop,daemon=True).start();threading.Thread(target=pulse_loop,daemon=True).start()
+    print(f'V41 http://127.0.0.1:{PORT} (모의 관찰 전용; 자동매매 없음)',flush=True)
     http.server.ThreadingHTTPServer(('0.0.0.0',PORT),Handler).serve_forever()
