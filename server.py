@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""MY SIGNAL AI PRO V41: research-only Bithumb scanner, stdlib server."""
+"""MY SIGNAL AI PRO V42: bounded parallel Bithumb scanner and signal diagnostics."""
 import json, os, time, math, sqlite3, threading, urllib.request, urllib.parse, http.server, pathlib, statistics, re, html, xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import Counter
 from datetime import datetime, timezone, timedelta
 ROOT=pathlib.Path(__file__).parent
 DATA_DIR=pathlib.Path(os.getenv("DATA_DIR",str(ROOT/"data")))
@@ -10,10 +12,11 @@ ACCESS_TOKEN=os.getenv("ACCESS_TOKEN", "").strip()
 PORT=int(os.getenv('PORT','8765'))
 INTERVAL=max(60,int(os.getenv('SCAN_SECONDS','120')))
 TOP=max(5,min(80,int(os.getenv('DEEP_MARKETS','40'))))
+WORKERS=max(1,min(8,int(os.getenv('DEEP_WORKERS','4'))))
 BASE='https://api.bithumb.com'
 NEWS_FEEDS=[('CoinDesk','https://www.coindesk.com/arc/outboundfeeds/rss/'),('Cointelegraph','https://cointelegraph.com/rss')]
 lock=threading.Lock()
-state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V41-MOMENTUM','selection_details':{},'outcome_summary':{},'market_audit':[],'market_leaders':[],'tracked':[],'setup_events':[],'market_updated':None,'momentum':[],'momentum_updated':None,'audit_updated':None,'buy_enabled':True,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
+state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V42-PARALLEL-AUDIT','selection_details':{},'outcome_summary':{},'market_audit':[],'market_leaders':[],'tracked':[],'setup_events':[],'market_updated':None,'momentum':[],'momentum_updated':None,'signal_diagnostics':{},'analysis_workers':WORKERS,'audit_updated':None,'buy_enabled':True,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
 
 def get_json(path):
     req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V40/0.1','Accept':'application/json'})
@@ -276,7 +279,7 @@ def read_setups(con,now_ts,limit=100):
     return out
 
 
-def select_deep_markets(tickers, top, cycle, midnight_leaders=None, pinned=None):
+def select_deep_markets(tickers, top, cycle, midnight_leaders=None, pinned=None, accelerators=None):
     """Bounded selection with liquid baseline, midnight leaders and rotation.
 
     This only improves coverage; it does not predict future returns.
@@ -289,6 +292,9 @@ def select_deep_markets(tickers, top, cycle, midnight_leaders=None, pinned=None)
             picked.append(x);sources[x['market']]=reason
     # Sticky candidates retain deep-analysis priority across cycles.
     for market in (pinned or [])[:max(1,top//2)]:add(eligible.get(market),'기존 후보 지속 추적')
+    # Short-interval acceleration is a *priority for investigation*, not BUY.
+    for row in (accelerators or [])[:max(1,top//4)]:
+        add(eligible.get(row.get('market')),'단기 가격 가속 감시')
     # Reserve space for dynamic and rotating candidates even when top is small.
     liquid_slots=max(1,top//3)
     for x in ranked[:liquid_slots]:add(x,'거래대금 상위')
@@ -435,6 +441,31 @@ def pulse_loop():
             with lock:state['errors']=(state.get('errors',[])+['빠른 시장 감시: '+str(e)[:120]])[-30:]
         time.sleep(max(45,int(os.getenv('PULSE_SECONDS','60'))))
 
+def analyze_market(ticker, name, source):
+    market=ticker['market'];price=float(ticker['trade_price'])
+    c5=fetch_candles(market,5)
+    c15=fetch_candles(market,15)
+    c60=fetch_candles(market,60)
+    r=analyze(c5,c15,c60,price,float(ticker.get('signed_change_rate') or 0)*100)
+    r.update(selection_source=source,market=market,name=name,price=price,
+             change24=round(float(ticker.get('signed_change_rate') or 0)*100,2),
+             volume24=float(ticker.get('acc_trade_price_24h') or 0),time=int(time.time()))
+    return r
+
+def diagnose_signals(results, errors):
+    statuses=Counter(r.get('status','UNKNOWN') for r in results)
+    rejected=Counter()
+    for r in results:
+        if r.get('status') in ('BUY','PRE'):continue
+        for reason in r.get('risk',[]):rejected[reason]+=1
+        opportunity=r.get('opportunity') or {}
+        if not opportunity.get('eligible',False):rejected[opportunity.get('reason','상승 여력 미충족')]+=1
+        if r.get('status')=='DATA':rejected['확정봉 부족']+=1
+    return {'analyzed':len(results),'status_counts':dict(statuses),
+            'rejection_reasons':dict(rejected.most_common(15)),
+            'request_errors':len(errors),
+            'note':'조건별 빈도는 중복 집계될 수 있습니다. BUY 0건은 시장 상황 또는 필터 과도함 모두 가능.'}
+
 def scan():
     errors=[];t0=time.time()
     with lock:state['status']='빗썸 시장 조회 중'
@@ -451,24 +482,23 @@ def scan():
     with lock:
         leaders=list(state.get('midnight',{}).get('leaders',[])) if state.get('midnight',{}).get('active') else []
     with sqlite3.connect(DB) as con:pinned=tracked_priority(con,int(time.time()),max(1,TOP//2))
-    chosen,sources=select_deep_markets(tickers,TOP,int(time.time()//INTERVAL),leaders,pinned)
+    with lock: accelerators=list(state.get('momentum',[]))
+    chosen,sources=select_deep_markets(tickers,TOP,int(time.time()//INTERVAL),leaders,pinned,accelerators)
     # All-market ticker coverage is distinct from bounded candle analysis.
     market_leaders=sorted(tickers,key=lambda x:float(x.get('signed_change_rate') or 0),reverse=True)[:40]
     market_leaders=[{'market':x['market'],'name':names[x['market']],'price':float(x['trade_price']),'change24':round(float(x.get('signed_change_rate') or 0)*100,2),'turnover24':float(x.get('acc_trade_price_24h') or 0),'deep_selected':x['market'] in sources} for x in market_leaders]
     with lock:state.update(market_leaders=market_leaders,market_updated=int(time.time()))
     results=[]
     with lock:state.update(status=f'심층 분석 중 (0/{len(chosen)})',market_count=len(tickers),deep_count=0,selection_details={k:sum(v==k for v in sources.values()) for k in set(sources.values())})
-    for i,x in enumerate(chosen):
-        m=x['market'];p=float(x['trade_price'])
-        try:
-            c5=fetch_candles(m,5);time.sleep(.14)
-            c15=fetch_candles(m,15);time.sleep(.14)
-            c60=fetch_candles(m,60);time.sleep(.14)
-            r=analyze(c5,c15,c60,p,float(x.get('signed_change_rate') or 0)*100)
-            r.update(selection_source=sources.get(m,'미확인'),market=m,name=names[m],price=p,change24=round(float(x.get('signed_change_rate') or 0)*100,2),volume24=float(x.get('acc_trade_price_24h') or 0),time=int(time.time()))
-            results.append(r)
-        except Exception as e:errors.append(m+': '+str(e)[:120])
-        with lock:state.update(status=f'심층 분석 중 ({i+1}/{len(chosen)})',deep_count=i+1)
+    # Bounded concurrency reduces serial HTTP latency; no shared SQLite writes in workers.
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        futures={pool.submit(analyze_market,x,names.get(x['market'],x['market']),sources.get(x['market'],'미확인')):x['market'] for x in chosen}
+        for i,f in enumerate(as_completed(futures),1):
+            try:results.append(f.result())
+            except Exception as e:errors.append(futures[f]+': '+str(e)[:120])
+            with lock:state.update(status=f'심층 분석 중 ({i}/{len(chosen)})',deep_count=i)
+    diagnostics=diagnose_signals(results,errors)
+    with lock:state['signal_diagnostics']=diagnostics
     results.sort(key=lambda x:({'BUY':0,'PRE':1,'READY':2,'WATCH':3,'WAIT':4,'DATA':5}.get(x.get('status'),6),x.get('tier_rank',3),-x.get('score',0)))
     with sqlite3.connect(DB) as con:
         update_outcomes(con,tickers,int(time.time()))
@@ -643,7 +673,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return
         if path=='/health':
-            data=json.dumps({'ok':True,'engine':'V41-MOMENTUM','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
+            data=json.dumps({'ok':True,'engine':'V42-PARALLEL-AUDIT','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
         elif path=='/api/status':
             with lock: data=json.dumps(state,ensure_ascii=False).encode()
             typ='application/json; charset=utf-8'
@@ -665,6 +695,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path=='/api/tracked':
             with sqlite3.connect(DB) as con:rows=read_setups(con,int(time.time()))
             data=json.dumps({'rows':rows,'note':'최초 관찰가 대비 변화. BUY는 기술 조건 신호이며 수익성 미검증. 오래된 분석은 별도 표시.'},ensure_ascii=False).encode();typ='application/json; charset=utf-8'
+        elif path=='/api/diagnostics':
+            with lock: d=dict(state.get('signal_diagnostics',{}))
+            data=json.dumps(d,ensure_ascii=False).encode();typ='application/json; charset=utf-8'
         elif path=='/api/momentum':
             with lock: rows=list(state['momentum']);ts=state['momentum_updated']
             data=json.dumps({'rows':rows,'updated':ts,'note':'45~900초 간격 시세 비교. BUY 신호가 아니며 호가·실제 체결 흐름 분석 아님'},ensure_ascii=False).encode();typ='application/json; charset=utf-8'
@@ -687,5 +720,5 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 if __name__=='__main__':
     db_init();threading.Thread(target=loop,daemon=True).start();threading.Thread(target=midnight_loop,daemon=True).start();threading.Thread(target=pulse_loop,daemon=True).start()
-    print(f'V41 http://127.0.0.1:{PORT} (모의 관찰 전용; 자동매매 없음)',flush=True)
+    print(f'V42 http://127.0.0.1:{PORT} (모의 관찰 전용; 자동매매 없음)',flush=True)
     http.server.ThreadingHTTPServer(('0.0.0.0',PORT),Handler).serve_forever()
