@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MY SIGNAL AI PRO V37: research-only Bithumb scanner, stdlib server."""
+"""MY SIGNAL AI PRO V38: research-only Bithumb scanner, stdlib server."""
 import json, os, time, math, sqlite3, threading, urllib.request, urllib.parse, http.server, pathlib, statistics, re, html, xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 ROOT=pathlib.Path(__file__).parent
@@ -13,7 +13,7 @@ TOP=max(5,min(80,int(os.getenv('DEEP_MARKETS','40'))))
 BASE='https://api.bithumb.com'
 NEWS_FEEDS=[('CoinDesk','https://www.coindesk.com/arc/outboundfeeds/rss/'),('Cointelegraph','https://cointelegraph.com/rss')]
 lock=threading.Lock()
-state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V37-SIGNAL','selection_details':{},'outcome_summary':{},'market_audit':[],'market_leaders':[],'market_updated':None,'audit_updated':None,'buy_enabled':True,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
+state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V38-PERSIST','selection_details':{},'outcome_summary':{},'market_audit':[],'market_leaders':[],'tracked':[],'market_updated':None,'audit_updated':None,'buy_enabled':True,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
 
 def get_json(path):
     req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V35/0.1','Accept':'application/json'})
@@ -121,9 +121,88 @@ def db_init():
             if name not in cols:con.execute(f'ALTER TABLE signal_outcomes ADD COLUMN {name} {typ}')
         con.execute('CREATE TABLE IF NOT EXISTS market_audit(id INTEGER PRIMARY KEY, ts INTEGER, market TEXT, price REAL, change24 REAL, turnover24 REAL, analysis_status TEXT, selection_source TEXT)')
         con.execute('CREATE INDEX IF NOT EXISTS ix_audit_market_ts ON market_audit(market,ts)')
+        con.execute('''CREATE TABLE IF NOT EXISTS active_setups(
+            market TEXT PRIMARY KEY, first_seen INTEGER NOT NULL, last_analyzed INTEGER NOT NULL,
+            first_price REAL NOT NULL, first_change24 REAL, first_score INTEGER,
+            last_price REAL NOT NULL, peak_price REAL NOT NULL, trough_price REAL NOT NULL,
+            stop_price REAL NOT NULL, status TEXT NOT NULL, horizon TEXT NOT NULL,
+            expiry INTEGER NOT NULL, confirm_weak INTEGER NOT NULL DEFAULT 0,
+            last_score INTEGER, name TEXT, reason TEXT, last_signal INTEGER,
+            last_signal_price REAL, exit_reason TEXT DEFAULT '')''')
+        con.execute('CREATE INDEX IF NOT EXISTS ix_setups_expiry ON active_setups(expiry)')
 
 
-def select_deep_markets(tickers, top, cycle, midnight_leaders=None):
+def tracked_priority(con, now_ts, limit=32):
+    '''Persisted live setups get first claim on expensive candle analysis.'''
+    return [r[0] for r in con.execute(
+        "SELECT market FROM active_setups WHERE status IN ('PRE','BUY','HOLD','WATCH') AND expiry>? ORDER BY CASE status WHEN 'BUY' THEN 0 WHEN 'HOLD' THEN 1 WHEN 'PRE' THEN 2 ELSE 3 END,first_seen ASC LIMIT ?",
+        (now_ts,limit)).fetchall()]
+
+
+def maintain_setups(con, results, tickers, now_ts):
+    '''Sticky recommendations; tickers update marks, only closed-candle analysis changes technical state.
+
+    No price-only promotion to BUY. Hard stop is immediate on observed ticker; ordinary
+    demotion requires two consecutive deep analyses. Expiry is fixed on creation.
+    '''
+    prices={x['market']:float(x.get('trade_price') or 0) for x in tickers}
+    changes={x['market']:float(x.get('signed_change_rate') or 0)*100 for x in tickers}
+    for r in results:
+        m=r['market']; raw=r.get('status','WATCH');price=float(r.get('price') or 0)
+        if price<=0 or not math.isfinite(price):continue
+        old=con.execute('SELECT first_seen,first_price,stop_price,status,expiry,confirm_weak,last_signal,last_signal_price FROM active_setups WHERE market=?',(m,)).fetchone()
+        if old is None:
+            if raw not in ('PRE','BUY','READY'):continue
+            horizon='2~12시간' if r.get('tier_rank',2)==2 else '1~3일'
+            expiry=now_ts+(12*3600 if horizon=='2~12시간' else 72*3600)
+            con.execute('''INSERT INTO active_setups(market,first_seen,last_analyzed,first_price,first_change24,first_score,last_price,peak_price,trough_price,stop_price,status,horizon,expiry,confirm_weak,last_score,name,reason,last_signal,last_signal_price)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (m,now_ts,now_ts,price,r.get('change24'),r.get('score'),price,price,price,float(r.get('stop') or price*.97),
+                 'BUY' if raw=='BUY' else 'PRE',horizon,expiry,0,r.get('score'),r.get('name',m),r.get('decision_reason',''),now_ts if raw=='BUY' else None,price if raw=='BUY' else None))
+            continue
+        first,first_price,stop,prior,expiry,weak,last_signal,last_signal_price=old
+        if prior in ('STOP','EXPIRED'):continue
+        if price<=stop:
+            next_status='STOP';weak=0;reason='관측 가격이 최초 손절선 이탈'
+        elif now_ts>=expiry:
+            next_status='EXPIRED';weak=0;reason='최초 설정 관찰기간 종료'
+        elif raw=='BUY':
+            next_status='BUY' if prior!='HOLD' else 'HOLD';weak=0;reason='확정봉 BUY 조건 재충족'
+        elif prior in ('BUY','HOLD'):
+            next_status='HOLD';weak=0 if raw in ('PRE','READY') else weak+1
+            reason='상승 흐름 추적 중' if weak<2 else '기술 조건 약화 · 추적 유지, 신규 매수 아님'
+        elif raw in ('PRE','READY'):
+            next_status='PRE';weak=0;reason='전조 조건 유지'
+        else:
+            weak+=1;next_status='PRE' if weak<2 else 'WATCH';reason='연속 조건 약화 · 관찰 유지'
+        con.execute('''UPDATE active_setups SET last_analyzed=?,last_price=?,peak_price=MAX(peak_price,?),trough_price=MIN(trough_price,?),status=?,confirm_weak=?,last_score=?,name=?,reason=?,last_signal=CASE WHEN ?='BUY' AND status NOT IN ('BUY','HOLD') THEN ? ELSE last_signal END,last_signal_price=CASE WHEN ?='BUY' AND status NOT IN ('BUY','HOLD') THEN ? ELSE last_signal_price END WHERE market=?''',
+            (now_ts,price,price,price,next_status,weak,r.get('score'),r.get('name',m),reason,raw,now_ts,raw,price,m))
+    # Every market ticker updates observed price, even if the coin was not deep analyzed.
+    # Never claim a BUY from ticker changes alone.
+    for m,price in prices.items():
+        if price<=0 or not math.isfinite(price):continue
+        con.execute('''UPDATE active_setups SET last_price=?,peak_price=MAX(peak_price,?),trough_price=MIN(trough_price,?),status=CASE WHEN status IN ('STOP','EXPIRED') THEN status WHEN ?<=stop_price THEN 'STOP' WHEN ?>=expiry THEN 'EXPIRED' ELSE status END,exit_reason=CASE WHEN status NOT IN ('STOP','EXPIRED') AND ?<=stop_price THEN '관측 손절선 이탈' WHEN status NOT IN ('STOP','EXPIRED') AND ?>=expiry THEN '관찰기간 종료' ELSE exit_reason END WHERE market=?''',
+            (price,price,price,price,now_ts,price,now_ts,m))
+    con.execute("DELETE FROM active_setups WHERE expiry<? AND status IN ('STOP','EXPIRED')",(now_ts-14*86400,))
+    return read_setups(con,now_ts)
+
+
+def read_setups(con,now_ts,limit=100):
+    cols=['market','first_seen','last_analyzed','first_price','first_change24','first_score','last_price','peak_price','trough_price','stop_price','status','horizon','expiry','confirm_weak','last_score','name','reason','last_signal','last_signal_price','exit_reason']
+    rows=con.execute('SELECT '+','.join(cols)+''' FROM active_setups ORDER BY CASE status WHEN 'BUY' THEN 0 WHEN 'HOLD' THEN 1 WHEN 'PRE' THEN 2 WHEN 'WATCH' THEN 3 WHEN 'STOP' THEN 4 ELSE 5 END,first_seen ASC LIMIT ?''',(limit,)).fetchall()
+    out=[]
+    for row in rows:
+        d=dict(zip(cols,row));entry=d['first_price'];last=d['last_price'];peak=d['peak_price']
+        d['since_pct']=round((last/entry-1)*100,2) if entry else None
+        d['peak_since_pct']=round((peak/entry-1)*100,2) if entry else None
+        d['age_minutes']=max(0,(now_ts-d['first_seen'])//60)
+        d['stale_analysis']=now_ts-d['last_analyzed']>max(INTERVAL*3,600)
+        d['is_late']=d['first_change24'] is not None and d['first_change24']>=3
+        out.append(d)
+    return out
+
+
+def select_deep_markets(tickers, top, cycle, midnight_leaders=None, pinned=None):
     """Bounded selection with liquid baseline, midnight leaders and rotation.
 
     This only improves coverage; it does not predict future returns.
@@ -134,6 +213,8 @@ def select_deep_markets(tickers, top, cycle, midnight_leaders=None):
     def add(x,reason):
         if x and x['market'] not in sources and len(picked)<top:
             picked.append(x);sources[x['market']]=reason
+    # Sticky candidates retain deep-analysis priority across cycles.
+    for market in (pinned or [])[:max(1,top//2)]:add(eligible.get(market),'기존 후보 지속 추적')
     # Reserve space for dynamic and rotating candidates even when top is small.
     liquid_slots=max(1,top//3)
     for x in ranked[:liquid_slots]:add(x,'거래대금 상위')
@@ -238,7 +319,8 @@ def scan():
     tickers=[x for x in tickers if x.get('market') in names and float(x.get('trade_price') or 0)>0]
     with lock:
         leaders=list(state.get('midnight',{}).get('leaders',[])) if state.get('midnight',{}).get('active') else []
-    chosen,sources=select_deep_markets(tickers,TOP,int(time.time()//INTERVAL),leaders)
+    with sqlite3.connect(DB) as con:pinned=tracked_priority(con,int(time.time()),max(1,TOP//2))
+    chosen,sources=select_deep_markets(tickers,TOP,int(time.time()//INTERVAL),leaders,pinned)
     # All-market ticker coverage is distinct from bounded candle analysis.
     market_leaders=sorted(tickers,key=lambda x:float(x.get('signed_change_rate') or 0),reverse=True)[:40]
     market_leaders=[{'market':x['market'],'name':names[x['market']],'price':float(x['trade_price']),'change24':round(float(x.get('signed_change_rate') or 0)*100,2),'turnover24':float(x.get('acc_trade_price_24h') or 0),'deep_selected':x['market'] in sources} for x in market_leaders]
@@ -260,11 +342,12 @@ def scan():
     with sqlite3.connect(DB) as con:
         update_outcomes(con,tickers,int(time.time()))
         record_outcomes(con,results,int(time.time()))
+        tracked=maintain_setups(con,results,tickers,int(time.time()))
         summary=summarize_outcomes(con)
         market_audit=audit_market_tickers(con,tickers,results,int(time.time()))
         con.executemany('INSERT INTO snapshots(ts,market,status,score,entry,stop,features,reason) VALUES(?,?,?,?,?,?,?,?)',[(r['time'],r['market'],r['status'],r.get('score',0),r.get('entry',0),r.get('stop',0),json.dumps(r.get('features',{})),','.join(r.get('risk',[])) or r.get('reason','')) for r in results])
     news=fetch_news()
-    with lock:state.update(status='대기',last_scan=int(time.time()),errors=errors[:30],candidates=results,news=news,news_updated=int(time.time()),outcome_summary=summary,market_audit=market_audit,audit_updated=int(time.time()),scan_duration=round(time.time()-t0,1))
+    with lock:state.update(status='대기',last_scan=int(time.time()),errors=errors[:30],candidates=results,news=news,news_updated=int(time.time()),outcome_summary=summary,tracked=tracked,market_audit=market_audit,audit_updated=int(time.time()),scan_duration=round(time.time()-t0,1))
 
 
 # KST 23:50–00:30: scan every 30 seconds. No new market session is assumed.
@@ -428,7 +511,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return
         if path=='/health':
-            data=json.dumps({'ok':True,'engine':'V37-SIGNAL','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
+            data=json.dumps({'ok':True,'engine':'V38-PERSIST','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
         elif path=='/api/status':
             with lock: data=json.dumps(state,ensure_ascii=False).encode()
             typ='application/json; charset=utf-8'
@@ -444,6 +527,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 data=json.dumps({'error':'캔들 데이터 조회 실패: '+str(e)[:140]},ensure_ascii=False).encode();typ='application/json; charset=utf-8'
                 self.send_response(502);self.send_header('Content-Type',typ);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+        elif path=='/api/tracked':
+            with sqlite3.connect(DB) as con:rows=read_setups(con,int(time.time()))
+            data=json.dumps({'rows':rows,'note':'최초 관찰가 대비 변화. BUY는 기술 조건 신호이며 수익성 미검증. 오래된 분석은 별도 표시.'},ensure_ascii=False).encode();typ='application/json; charset=utf-8'
         elif path=='/api/audit':
             with sqlite3.connect(DB) as con:
                 rows=get_audit_rows(con)
