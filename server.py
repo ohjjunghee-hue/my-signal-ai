@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MY SIGNAL AI PRO V35: research-only Bithumb scanner, stdlib server."""
+"""MY SIGNAL AI PRO V37: research-only Bithumb scanner, stdlib server."""
 import json, os, time, math, sqlite3, threading, urllib.request, urllib.parse, http.server, pathlib, statistics, re, html, xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 ROOT=pathlib.Path(__file__).parent
@@ -8,12 +8,12 @@ DATA_DIR.mkdir(parents=True,exist_ok=True)
 DB=DATA_DIR/"signals.db"
 ACCESS_TOKEN=os.getenv("ACCESS_TOKEN", "").strip()
 PORT=int(os.getenv('PORT','8765'))
-INTERVAL=max(120,int(os.getenv('SCAN_SECONDS','300')))
-TOP=max(5,min(60,int(os.getenv('DEEP_MARKETS','25'))))
+INTERVAL=max(60,int(os.getenv('SCAN_SECONDS','120')))
+TOP=max(5,min(80,int(os.getenv('DEEP_MARKETS','40'))))
 BASE='https://api.bithumb.com'
 NEWS_FEEDS=[('CoinDesk','https://www.coindesk.com/arc/outboundfeeds/rss/'),('Cointelegraph','https://cointelegraph.com/rss')]
 lock=threading.Lock()
-state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V36-AUDIT','selection_details':{},'outcome_summary':{},'market_audit':[],'audit_updated':None,'buy_enabled':False,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
+state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V37-SIGNAL','selection_details':{},'outcome_summary':{},'market_audit':[],'market_leaders':[],'market_updated':None,'audit_updated':None,'buy_enabled':True,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
 
 def get_json(path):
     req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V35/0.1','Accept':'application/json'})
@@ -71,8 +71,16 @@ def analyze(c5,c15,c60,price,change24=0):
     score=round(min(95,max(0,25+(20 if trend else 0)+(12 if higher else 0)+min(18,vol*5)+(10 if compression<8 else 0)+(10 if candle_strength>.7 else 0)-len(risk)*9)))
     status='WATCH'
     if early and not risk and dist>=max(2.0,atr_pct*1.5):status='READY'
-    # A real BUY requires independently validated forward outcomes; disabled by design.
     if risk:status='WAIT'
+    # BUY is a strict, *technical* signal on closed candles, not a validated profit prediction.
+    recent_resistance=max(x['h'] for x in a[-21:-1])
+    confirmed_breakout=(last['c']>recent_resistance and prev['c']<=max(x['h'] for x in a[-22:-2]))
+    buy_setup=(confirmed_breakout and vol>=1.3 and trend and higher and
+               0<=rise5<=4.5 and change24<=10 and not risk and
+               candle_strength>=.65 and last['c']>prev['c'])
+    pre_setup=(early and not risk and change24<8 and vol>=1.3)
+    if buy_setup:status='BUY'
+    elif pre_setup:status='PRE'
     entry=price
     stop=min(x['l'] for x in a[-6:])
     if stop>=entry or (entry-stop)/entry*100>8:stop=entry-max(1.5*atr,entry*.025)
@@ -86,7 +94,7 @@ def analyze(c5,c15,c60,price,change24=0):
     else:
         tier='3~10% 단기 관찰';tier_rank=2;horizon='단기 · 도달 미검증'
     medium_targets=[{'pct':pct,'price':round(entry*(1+pct/100),8)} for pct in ((10,30,50) if tier_rank==0 else (10,20,30) if tier_rank==1 else (3,5,10))]
-    return {'status':status,'score':score,'opportunity_tier':tier,'tier_rank':tier_rank,'horizon_note':horizon,'medium_targets':medium_targets,'tier_disclaimer':'기술적 조건 분류일 뿐 목표 도달 예측이나 매수 추천 아님','entry':entry,'stop':round(stop,8),'stop_pct':round(riskpct,2),'targets':[round(entry*x,8) for x in (1.03,1.10,1.50)],'tp_levels':[{'price':round(entry+max(entry-stop,entry*.005)*mult,8),'pct':round(max(entry-stop,entry*.005)*mult/entry*100,2)} for mult in (1,1.5,2)],'decision':'WAIT' if status=='WAIT' else 'REJECT' if status=='DATA' else 'OBSERVE','decision_reason':('위험 조건 감지: '+', '.join(risk)) if risk else ('확정봉 부족' if status=='DATA' else '실거래 BUY 신호 미검증: 관찰 전용'),'target_note':'관찰 목표 +3/+10/+50%; 실현 가능성 검증 전','risk':risk,'reason':('초기 거래량·추세 조건 관찰' if early else '초기 상승 조건 미충족'),'features':{'vol_ratio':round(vol,2),'rise5_pct':round(rise5,2),'rise8_pct':round(rise8,2),'atr_pct':round(atr_pct,2),'compression_pct':round(compression,2),'resistance':round(resistance,8),'resistance_distance_pct':round(dist,2),'candle_strength':round(candle_strength,2),'trend5_15':trend,'trend60':higher}}
+    return {'status':status,'score':score,'opportunity_tier':tier,'tier_rank':tier_rank,'horizon_note':horizon,'medium_targets':medium_targets,'tier_disclaimer':'기술적 조건 분류일 뿐 목표 도달 예측이나 매수 추천 아님','entry':entry,'stop':round(stop,8),'stop_pct':round(riskpct,2),'targets':[round(entry*x,8) for x in (1.03,1.10,1.50)],'tp_levels':[{'price':round(entry+max(entry-stop,entry*.005)*mult,8),'pct':round(max(entry-stop,entry*.005)*mult/entry*100,2)} for mult in (1,1.5,2)],'decision':'BUY' if status=='BUY' else 'PRE' if status=='PRE' else 'WAIT' if status=='WAIT' else 'OBSERVE','decision_reason':('확정 5분봉 저항 돌파 + 거래량 1.3배 + 다중 추세 일치 (기술 신호, 수익 미검증)' if status=='BUY' else '추세·압축·거래량 조건 충족 (매수 아님)' if status=='PRE' else ('위험 조건 감지: '+', '.join(risk)) if risk else '진입 조건 미충족'),'target_note':'관찰 목표 +3/+10/+50%; 실현 가능성 검증 전','risk':risk,'reason':('초기 거래량·추세 조건 관찰' if early else '초기 상승 조건 미충족'),'features':{'vol_ratio':round(vol,2),'breakout_confirmed':confirmed_breakout,'rise5_pct':round(rise5,2),'rise8_pct':round(rise8,2),'atr_pct':round(atr_pct,2),'compression_pct':round(compression,2),'resistance':round(resistance,8),'resistance_distance_pct':round(dist,2),'candle_strength':round(candle_strength,2),'trend5_15':trend,'trend60':higher}}
 
 def fetch_news():
     items=[]
@@ -134,7 +142,13 @@ def select_deep_markets(tickers, top, cycle, midnight_leaders=None):
         add(eligible.get(row.get('market')),'자정 급등 감시')
     # A second path uses current 24h movers even outside the midnight window.
     movers=sorted(ranked,key=lambda x:float(x.get('signed_change_rate') or 0),reverse=True)
-    for x in movers[:max(1,top//5)]:add(x,'24시간 상승 상위 · 이미 상승 주의')
+    mover_quota=max(1,top//5)
+    mover_added=0
+    for x in movers:
+        if mover_added>=mover_quota:break
+        if x['market'] not in sources:
+            add(x,'24시간 상승 상위 · 이미 상승 주의')
+            mover_added+=1
     remaining=[x for x in ranked if x['market'] not in sources]
     slots=top-len(picked)
     if remaining and slots:
@@ -169,7 +183,7 @@ def record_outcomes(con,results,now_ts):
     # Preserve existing first_seen and first_change24; never overwrite on later scans.
     day=datetime.fromtimestamp(now_ts,timezone.utc).strftime('%Y-%m-%d')
     for r in results:
-        if r.get('status') not in ('READY','WATCH'):continue
+        if r.get('status') not in ('BUY','PRE','READY','WATCH'):continue
         entry=float(r.get('entry') or 0)
         if entry<=0:continue
         change=r.get('change24')
@@ -225,6 +239,10 @@ def scan():
     with lock:
         leaders=list(state.get('midnight',{}).get('leaders',[])) if state.get('midnight',{}).get('active') else []
     chosen,sources=select_deep_markets(tickers,TOP,int(time.time()//INTERVAL),leaders)
+    # All-market ticker coverage is distinct from bounded candle analysis.
+    market_leaders=sorted(tickers,key=lambda x:float(x.get('signed_change_rate') or 0),reverse=True)[:40]
+    market_leaders=[{'market':x['market'],'name':names[x['market']],'price':float(x['trade_price']),'change24':round(float(x.get('signed_change_rate') or 0)*100,2),'turnover24':float(x.get('acc_trade_price_24h') or 0),'deep_selected':x['market'] in sources} for x in market_leaders]
+    with lock:state.update(market_leaders=market_leaders,market_updated=int(time.time()))
     results=[]
     with lock:state.update(status=f'심층 분석 중 (0/{len(chosen)})',market_count=len(tickers),deep_count=0,selection_details={k:sum(v==k for v in sources.values()) for k in set(sources.values())})
     for i,x in enumerate(chosen):
@@ -238,7 +256,7 @@ def scan():
             results.append(r)
         except Exception as e:errors.append(m+': '+str(e)[:120])
         with lock:state.update(status=f'심층 분석 중 ({i+1}/{len(chosen)})',deep_count=i+1)
-    results.sort(key=lambda x:(x.get('tier_rank',3),-x.get('score',0)))
+    results.sort(key=lambda x:({'BUY':0,'PRE':1,'READY':2,'WATCH':3,'WAIT':4,'DATA':5}.get(x.get('status'),6),x.get('tier_rank',3),-x.get('score',0)))
     with sqlite3.connect(DB) as con:
         update_outcomes(con,tickers,int(time.time()))
         record_outcomes(con,results,int(time.time()))
@@ -410,7 +428,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return
         if path=='/health':
-            data=json.dumps({'ok':True,'engine':'V36-AUDIT','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
+            data=json.dumps({'ok':True,'engine':'V37-SIGNAL','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
         elif path=='/api/status':
             with lock: data=json.dumps(state,ensure_ascii=False).encode()
             typ='application/json; charset=utf-8'
