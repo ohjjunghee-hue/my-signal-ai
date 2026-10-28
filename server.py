@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MY SIGNAL AI PRO V42: bounded parallel Bithumb scanner and signal diagnostics."""
+"""MY SIGNAL AI PRO V43: auditable BUY gates and near-miss tracking."""
 import json, os, time, math, sqlite3, threading, urllib.request, urllib.parse, http.server, pathlib, statistics, re, html, xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
@@ -16,10 +16,10 @@ WORKERS=max(1,min(8,int(os.getenv('DEEP_WORKERS','4'))))
 BASE='https://api.bithumb.com'
 NEWS_FEEDS=[('CoinDesk','https://www.coindesk.com/arc/outboundfeeds/rss/'),('Cointelegraph','https://cointelegraph.com/rss')]
 lock=threading.Lock()
-state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V42-PARALLEL-AUDIT','selection_details':{},'outcome_summary':{},'market_audit':[],'market_leaders':[],'tracked':[],'setup_events':[],'market_updated':None,'momentum':[],'momentum_updated':None,'signal_diagnostics':{},'analysis_workers':WORKERS,'audit_updated':None,'buy_enabled':True,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
+state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V43-BUY-GATE-AUDIT','selection_details':{},'outcome_summary':{},'market_audit':[],'market_leaders':[],'tracked':[],'setup_events':[],'market_updated':None,'momentum':[],'momentum_updated':None,'signal_diagnostics':{},'analysis_workers':WORKERS,'audit_updated':None,'buy_enabled':True,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
 
 def get_json(path):
-    req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V40/0.1','Accept':'application/json'})
+    req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V43/0.1','Accept':'application/json'})
     with urllib.request.urlopen(req,timeout=12) as res: result=json.load(res)
     if isinstance(result,dict) and result.get('error'):raise ValueError(str(result['error']))
     return result
@@ -110,6 +110,16 @@ def analyze(c5,c15,c60,price,change24=0):
                0<=rise5<=4.5 and change24<=10 and not risk and
                candle_strength>=.65 and last['c']>prev['c'])
     pre_setup=(early and not risk and change24<8 and vol>=1.3)
+    buy_gates={
+      '확정봉 20봉 고점 돌파':bool(confirmed_breakout),
+      '거래량 1.3배 이상':bool(vol>=1.3),
+      '5·15분 추세':bool(trend),
+      '1시간 추세':bool(higher),
+      '5분 상승폭 0~4.5%':bool(0<=rise5<=4.5),
+      '24시간 상승률 10% 이하':bool(change24<=10),
+      '위험 경고 없음':bool(not risk),
+      '캔들 종가 위치 65% 이상':bool(candle_strength>=.65),
+      '직전 봉 대비 상승 마감':bool(last['c']>prev['c'])}
     if buy_setup:status='BUY'
     elif pre_setup:status='PRE'
     entry=price
@@ -134,6 +144,7 @@ def analyze(c5,c15,c60,price,change24=0):
       'tp_levels':medium_targets,'opportunity':opportunity,'decision':decision,
       'decision_reason':('확정봉 돌파·거래량·추세 확인' if status=='BUY' else '초기 상승 준비 신호' if status=='PRE' else opportunity['reason']),
       'target_note':'시나리오 목표 · 저항/손익비/과열 조건 검토 · 목표 도달 확률 미검증',
+      'buy_gates':buy_gates,'buy_gate_passed':sum(buy_gates.values()),'buy_gate_total':len(buy_gates),
       'risk':risk,'reason':('초기 거래량·추세 조건 관찰' if early else '초기 상승 조건 미충족'),
       'features':{'vol_ratio':round(vol,2),'breakout_confirmed':confirmed_breakout,
       'rise5_pct':round(rise5,2),'rise8_pct':round(rise8,2),'atr_pct':round(atr_pct,2),
@@ -453,18 +464,32 @@ def analyze_market(ticker, name, source):
     return r
 
 def diagnose_signals(results, errors):
+    """Count closed-candle BUY gates, distinguish near misses from actionable BUY."""
     statuses=Counter(r.get('status','UNKNOWN') for r in results)
-    rejected=Counter()
+    rejected=Counter();passed=Counter();failed=Counter();near=[];gated=0
     for r in results:
+        gates=r.get('buy_gates') or {}
+        if gates:
+            gated+=1
+            for key,ok in gates.items():
+                (passed if ok else failed)[key]+=1
+            if r.get('status')!='BUY':
+                near.append({'market':r.get('market',''),'name':r.get('name',''),
+                  'status':r.get('status',''),'score':r.get('score',0),
+                  'passed':sum(bool(x) for x in gates.values()),'total':len(gates),
+                  'failed': [k for k,v in gates.items() if not v],
+                  'opportunity_rejected':not (r.get('opportunity') or {}).get('eligible',False)})
         if r.get('status') in ('BUY','PRE'):continue
         for reason in r.get('risk',[]):rejected[reason]+=1
         opportunity=r.get('opportunity') or {}
         if not opportunity.get('eligible',False):rejected[opportunity.get('reason','상승 여력 미충족')]+=1
         if r.get('status')=='DATA':rejected['확정봉 부족']+=1
-    return {'analyzed':len(results),'status_counts':dict(statuses),
-            'rejection_reasons':dict(rejected.most_common(15)),
-            'request_errors':len(errors),
-            'note':'조건별 빈도는 중복 집계될 수 있습니다. BUY 0건은 시장 상황 또는 필터 과도함 모두 가능.'}
+    near.sort(key=lambda x:(-x['passed'],x['opportunity_rejected'],-x['score']))
+    return {'analyzed':len(results),'gate_evaluated':gated,'status_counts':dict(statuses),
+      'gate_pass_counts':dict(passed),'gate_fail_counts':dict(failed),
+      'near_misses':near[:8], 'rejection_reasons':dict(rejected.most_common(15)),
+      'request_errors':len(errors),
+      'note':'각 조건은 확정봉 기술 필터이며 통과율은 상승 확률이 아닙니다. 근접 후보는 BUY가 아닙니다.'}
 
 def scan():
     errors=[];t0=time.time()
@@ -720,5 +745,5 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 if __name__=='__main__':
     db_init();threading.Thread(target=loop,daemon=True).start();threading.Thread(target=midnight_loop,daemon=True).start();threading.Thread(target=pulse_loop,daemon=True).start()
-    print(f'V42 http://127.0.0.1:{PORT} (모의 관찰 전용; 자동매매 없음)',flush=True)
+    print(f'V43 http://127.0.0.1:{PORT} (모의 관찰 전용; 자동매매 없음)',flush=True)
     http.server.ThreadingHTTPServer(('0.0.0.0',PORT),Handler).serve_forever()
