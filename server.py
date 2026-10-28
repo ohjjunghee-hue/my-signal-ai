@@ -17,7 +17,7 @@ WORKERS=max(1,min(8,int(os.getenv('DEEP_WORKERS','4'))))
 BASE='https://api.bithumb.com'
 NEWS_FEEDS=[('CoinDesk','https://www.coindesk.com/arc/outboundfeeds/rss/'),('Cointelegraph','https://cointelegraph.com/rss')]
 lock=threading.Lock()
-state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V44-SCORE-SEPARATION','selection_details':{},'outcome_summary':{},'market_audit':[],'market_leaders':[],'tracked':[],'setup_events':[],'market_updated':None,'momentum':[],'momentum_updated':None,'signal_diagnostics':{},'analysis_workers':WORKERS,'audit_updated':None,'buy_enabled':True,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
+state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V48-INTEGRATED','selection_details':{},'outcome_summary':{},'market_audit':[],'market_leaders':[],'tracked':[],'setup_events':[],'market_updated':None,'momentum':[],'momentum_updated':None,'signal_diagnostics':{},'analysis_workers':WORKERS,'audit_updated':None,'buy_enabled':True,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
 
 def get_json(path):
     req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V44/0.1','Accept':'application/json'})
@@ -526,6 +526,8 @@ def scan():
         except Exception as e:errors.append('시세 일부 누락: '+str(e)[:120])
         time.sleep(.12)
     tickers=[x for x in tickers if x.get('market') in names and float(x.get('trade_price') or 0)>0]
+    if len(tickers)<len(names):
+        errors.append(f'전체 시세 일부 누락: {len(tickers)}/{len(names)}종목 수신')
     with lock:
         leaders=list(state.get('midnight',{}).get('leaders',[])) if state.get('midnight',{}).get('active') else []
     with sqlite3.connect(DB) as con:pinned=tracked_priority(con,int(time.time()),max(1,TOP//2))
@@ -544,6 +546,8 @@ def scan():
             try:results.append(f.result())
             except Exception as e:errors.append(futures[f]+': '+str(e)[:120])
             with lock:state.update(status=f'심층 분석 중 ({i}/{len(chosen)})',deep_count=i)
+    if not results:
+        errors.append('심층 분석 결과 없음: API 및 캔들 데이터 확인 필요')
     diagnostics=diagnose_signals(results,errors)
     with lock:state['signal_diagnostics']=diagnostics
     results.sort(key=lambda x:({'BUY':0,'PRE':1,'READY':2,'WATCH':3,'WAIT':4,'DATA':5}.get(x.get('status'),6),x.get('tier_rank',3),-x.get('score',0)))
@@ -722,9 +726,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return
         if path=='/health':
-            data=json.dumps({'ok':True,'engine':'V45-OUTCOME-VALIDATION','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
+            data=json.dumps({'ok':True,'engine':'V48-INTEGRATED','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
         elif path=='/api/status':
-            with lock: data=json.dumps(state,ensure_ascii=False).encode()
+            with lock: data=json.dumps(state,ensure_ascii=False,allow_nan=False).encode()
             typ='application/json; charset=utf-8'
         elif path=='/api/chart':
             try:
