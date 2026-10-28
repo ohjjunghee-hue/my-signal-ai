@@ -10,7 +10,21 @@ import v47_storage as storage
 class Handler(v46_boot.Handler):
     def do_GET(self):
         if urlparse(self.path).path == '/api/storage-health':
-            # Delegate authentication through V45's existing gate: endpoint is non-sensitive.
+            # Protect storage status with the same token/cookie as other APIs.
+            if server.ACCESS_TOKEN:
+                import http.cookies, hmac
+                from urllib.parse import parse_qs
+                cookie=http.cookies.SimpleCookie()
+                try: cookie.load(self.headers.get('Cookie',''))
+                except Exception: pass
+                supplied=parse_qs(urlparse(self.path).query).get('token',[''])[0]
+                stored=cookie.get('ms_token')
+                valid=hmac.compare_digest(supplied,server.ACCESS_TOKEN) or (stored is not None and hmac.compare_digest(stored.value,server.ACCESS_TOKEN))
+                if not valid:
+                    self.send_response(401)
+                    self.send_header('Content-Length','0')
+                    self.end_headers()
+                    return
             payload=json.dumps(storage.status(), ensure_ascii=False).encode()
             self.send_response(200)
             self.send_header('Content-Type','application/json; charset=utf-8')
