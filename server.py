@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MY SIGNAL AI PRO V43: auditable BUY gates and near-miss tracking."""
+"""MY SIGNAL AI PRO V44: separate watch and BUY suitability diagnostics."""
 import json, os, time, math, sqlite3, threading, urllib.request, urllib.parse, http.server, pathlib, statistics, re, html, xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
@@ -16,10 +16,10 @@ WORKERS=max(1,min(8,int(os.getenv('DEEP_WORKERS','4'))))
 BASE='https://api.bithumb.com'
 NEWS_FEEDS=[('CoinDesk','https://www.coindesk.com/arc/outboundfeeds/rss/'),('Cointelegraph','https://cointelegraph.com/rss')]
 lock=threading.Lock()
-state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V43-BUY-GATE-AUDIT','selection_details':{},'outcome_summary':{},'market_audit':[],'market_leaders':[],'tracked':[],'setup_events':[],'market_updated':None,'momentum':[],'momentum_updated':None,'signal_diagnostics':{},'analysis_workers':WORKERS,'audit_updated':None,'buy_enabled':True,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
+state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V44-SCORE-SEPARATION','selection_details':{},'outcome_summary':{},'market_audit':[],'market_leaders':[],'tracked':[],'setup_events':[],'market_updated':None,'momentum':[],'momentum_updated':None,'signal_diagnostics':{},'analysis_workers':WORKERS,'audit_updated':None,'buy_enabled':True,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
 
 def get_json(path):
-    req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V43/0.1','Accept':'application/json'})
+    req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V44/0.1','Accept':'application/json'})
     with urllib.request.urlopen(req,timeout=12) as res: result=json.load(res)
     if isinstance(result,dict) and result.get('error'):raise ValueError(str(result['error']))
     return result
@@ -120,6 +120,23 @@ def analyze(c5,c15,c60,price,change24=0):
       '위험 경고 없음':bool(not risk),
       '캔들 종가 위치 65% 이상':bool(candle_strength>=.65),
       '직전 봉 대비 상승 마감':bool(last['c']>prev['c'])}
+    # Diagnostic suitability is not a probability or a replacement for strict BUY gates.
+    # Cap scores for low liquidity momentum, downtrends, and high-risk setups.
+    suitability=round(100*sum(buy_gates.values())/len(buy_gates))
+    suitability_reasons=[]
+    if vol<1.3:
+        suitability=min(suitability,39)
+        suitability_reasons.append('확정봉 거래량 1.3배 미만')
+    if not trend or not higher:
+        suitability=min(suitability,45)
+        suitability_reasons.append('추세 미확인')
+    if risk:
+        suitability=min(suitability,35)
+        suitability_reasons.extend(risk)
+    if change24>10:
+        suitability=min(suitability,30)
+        suitability_reasons.append('24시간 상승률 10% 초과 · 추격 경계')
+    suitability=max(0,min(100,suitability))
     if buy_setup:status='BUY'
     elif pre_setup:status='PRE'
     entry=price
@@ -136,7 +153,7 @@ def analyze(c5,c15,c60,price,change24=0):
         # A technical BUY breakout without adequate upside/RR is NOT a buy candidate.
         if status in ('BUY','PRE','READY'):status='WAIT'
     decision='BUY' if status=='BUY' else 'PRE' if status=='PRE' else 'WAIT' if status=='WAIT' else 'OBSERVE'
-    return {'status':status,'score':score,'opportunity_tier':tier,'tier_rank':tier_rank,
+    return {'status':status,'score':score,'buy_suitability':suitability,'suitability_reasons':suitability_reasons,'score_label':'관찰 점수 (상승 확률 아님)','opportunity_tier':tier,'tier_rank':tier_rank,
       'horizon_note':'상승 시나리오 · 기간 및 도달 미검증',
       'medium_targets':medium_targets,'tier_disclaimer':'목표는 가정된 가격 구간이며 예측이나 수익 보장이 아님',
       'entry':entry,'stop':round(stop,8),'stop_pct':round(riskpct,2),
@@ -487,6 +504,9 @@ def diagnose_signals(results, errors):
     near.sort(key=lambda x:(-x['passed'],x['opportunity_rejected'],-x['score']))
     return {'analyzed':len(results),'gate_evaluated':gated,'status_counts':dict(statuses),
       'gate_pass_counts':dict(passed),'gate_fail_counts':dict(failed),
+      'suitability_summary':{'high_watch_low_buy':sum(1 for r in results if r.get('score',0)>=65 and r.get('buy_suitability',0)<40),
+      'low_volume':sum(1 for r in results if r.get('features',{}).get('vol_ratio',0)<1.3),
+      'warning':'매수 적합도는 규칙 기반 진단 지표이며 실제 상승 확률이나 수익률이 아닙니다.'},
       'near_misses':near[:8], 'rejection_reasons':dict(rejected.most_common(15)),
       'request_errors':len(errors),
       'note':'각 조건은 확정봉 기술 필터이며 통과율은 상승 확률이 아닙니다. 근접 후보는 BUY가 아닙니다.'}
@@ -745,5 +765,5 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 if __name__=='__main__':
     db_init();threading.Thread(target=loop,daemon=True).start();threading.Thread(target=midnight_loop,daemon=True).start();threading.Thread(target=pulse_loop,daemon=True).start()
-    print(f'V43 http://127.0.0.1:{PORT} (모의 관찰 전용; 자동매매 없음)',flush=True)
+    print(f'V44 http://127.0.0.1:{PORT} (모의 관찰 전용; 자동매매 없음)',flush=True)
     http.server.ThreadingHTTPServer(('0.0.0.0',PORT),Handler).serve_forever()
