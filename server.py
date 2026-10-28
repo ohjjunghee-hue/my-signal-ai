@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""MY SIGNAL AI PRO V44: separate watch and BUY suitability diagnostics."""
+"""MY SIGNAL AI PRO V45: forward-only milestone validation and preserved V44 diagnostics."""
 import json, os, time, math, sqlite3, threading, urllib.request, urllib.parse, http.server, pathlib, statistics, re, html, xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
+import outcome_validation as ov
 from datetime import datetime, timezone, timedelta
 ROOT=pathlib.Path(__file__).parent
 DATA_DIR=pathlib.Path(os.getenv("DATA_DIR",str(ROOT/"data")))
@@ -185,6 +186,7 @@ def fetch_news():
 
 def db_init():
     with sqlite3.connect(DB) as con:
+        ov.init(con)
         con.execute('CREATE TABLE IF NOT EXISTS snapshots(id INTEGER PRIMARY KEY,ts INTEGER,market TEXT,status TEXT,score INTEGER,entry REAL,stop REAL,features TEXT,reason TEXT)')
         con.execute('CREATE INDEX IF NOT EXISTS ix_market_time ON snapshots(market,ts)')
         con.execute('CREATE TABLE IF NOT EXISTS signal_outcomes(id INTEGER PRIMARY KEY,market TEXT,day TEXT,first_seen INTEGER,last_seen INTEGER,entry REAL,last_price REAL,max_pct REAL,min_pct REAL,status TEXT,signal_type TEXT,UNIQUE(market,day))')
@@ -546,6 +548,8 @@ def scan():
     with lock:state['signal_diagnostics']=diagnostics
     results.sort(key=lambda x:({'BUY':0,'PRE':1,'READY':2,'WATCH':3,'WAIT':4,'DATA':5}.get(x.get('status'),6),x.get('tier_rank',3),-x.get('score',0)))
     with sqlite3.connect(DB) as con:
+        ov.observe(con,tickers,int(time.time()))
+        ov.record(con,results,int(time.time()))
         update_outcomes(con,tickers,int(time.time()))
         record_outcomes(con,results,int(time.time()))
         tracked=maintain_setups(con,results,tickers,int(time.time()))
@@ -718,7 +722,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return
         if path=='/health':
-            data=json.dumps({'ok':True,'engine':'V42-PARALLEL-AUDIT','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
+            data=json.dumps({'ok':True,'engine':'V45-OUTCOME-VALIDATION','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
         elif path=='/api/status':
             with lock: data=json.dumps(state,ensure_ascii=False).encode()
             typ='application/json; charset=utf-8'
@@ -750,6 +754,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with sqlite3.connect(DB) as con:
                 rows=get_audit_rows(con)
             data=json.dumps({'rows':rows,'note':'첫 관찰 시점 기준. 과거 데이터가 없는 기존 기록은 검증 불가. 가격 샘플 사이 고저점 누락 가능.'},ensure_ascii=False).encode();typ='application/json; charset=utf-8'
+        elif path=='/api/validation':
+            with sqlite3.connect(DB) as con:result=ov.report(con)
+            data=json.dumps(result,ensure_ascii=False,allow_nan=False).encode();typ='application/json; charset=utf-8'
         elif path=='/api/outcomes':
             with sqlite3.connect(DB) as con:
                 rows=con.execute('SELECT market,first_seen,last_seen,entry,last_price,max_pct,min_pct,status,signal_type FROM signal_outcomes ORDER BY first_seen DESC LIMIT 100').fetchall()
@@ -765,5 +772,5 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 if __name__=='__main__':
     db_init();threading.Thread(target=loop,daemon=True).start();threading.Thread(target=midnight_loop,daemon=True).start();threading.Thread(target=pulse_loop,daemon=True).start()
-    print(f'V44 http://127.0.0.1:{PORT} (모의 관찰 전용; 자동매매 없음)',flush=True)
+    print(f'V45 http://127.0.0.1:{PORT} (모의 관찰 전용; 자동매매 없음)',flush=True)
     http.server.ThreadingHTTPServer(('0.0.0.0',PORT),Handler).serve_forever()
