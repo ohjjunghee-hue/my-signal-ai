@@ -4,6 +4,7 @@ import json, os, time, math, sqlite3, threading, urllib.request, urllib.parse, h
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 import outcome_validation as ov
+import paper_bridge
 from datetime import datetime, timezone, timedelta
 ROOT=pathlib.Path(__file__).parent
 DATA_DIR=pathlib.Path(os.getenv("DATA_DIR",str(ROOT/"data")))
@@ -548,6 +549,12 @@ def scan():
             with lock:state.update(status=f'심층 분석 중 ({i}/{len(chosen)})',deep_count=i)
     if not results:
         errors.append('심층 분석 결과 없음: API 및 캔들 데이터 확인 필요')
+    try:
+        paper_status=paper_bridge.sync(DB,results,tickers,int(time.time()))
+    except Exception as exc:
+        paper_status={'error':str(exc)[:160]}
+        errors.append('모의거래 기록 실패: '+str(exc)[:120])
+    with lock:state['paper_status']=paper_status
     diagnostics=diagnose_signals(results,errors)
     with lock:state['signal_diagnostics']=diagnostics
     results.sort(key=lambda x:({'BUY':0,'PRE':1,'READY':2,'WATCH':3,'WAIT':4,'DATA':5}.get(x.get('status'),6),x.get('tier_rank',3),-x.get('score',0)))
@@ -758,6 +765,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with sqlite3.connect(DB) as con:
                 rows=get_audit_rows(con)
             data=json.dumps({'rows':rows,'note':'첫 관찰 시점 기준. 과거 데이터가 없는 기존 기록은 검증 불가. 가격 샘플 사이 고저점 누락 가능.'},ensure_ascii=False).encode();typ='application/json; charset=utf-8'
+        elif path=='/api/paper':
+            try:
+                data=json.dumps(paper_bridge.status(DB),ensure_ascii=False,allow_nan=False).encode();typ='application/json; charset=utf-8'
+            except Exception as exc:
+                data=json.dumps({'error':str(exc)[:160]}).encode();typ='application/json; charset=utf-8'
+                self.send_response(503);self.send_header('Content-Type',typ);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
         elif path=='/api/validation':
             with sqlite3.connect(DB) as con:result=ov.report(con)
             data=json.dumps(result,ensure_ascii=False,allow_nan=False).encode();typ='application/json; charset=utf-8'
