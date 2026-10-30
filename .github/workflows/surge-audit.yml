@@ -1,0 +1,38 @@
+
+name: Bithumb Surge Historical Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Collect Bithumb historical surge data
+        run: |
+          python all_market_historical_audit.py \
+            --days 30 \
+            --units 5,15,60 \
+            --delay 0.2 \
+            --output historical_audit
+
+      - name: Save audit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bithumb-surge-audit
+          path: historical_audit/
+          retention-days: 30
