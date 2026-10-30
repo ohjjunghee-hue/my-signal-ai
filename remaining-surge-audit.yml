@@ -1,0 +1,26 @@
+name: Bithumb Remaining Surge Audit
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  remaining:
+    runs-on: ubuntu-latest
+    timeout-minutes: 160
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Collect only previously missing markets
+        run: python collect_remaining.py --shard ${{ matrix.shard }} --shards 4 --days 30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: remaining-shard-${{ matrix.shard }}
+          path: remaining_shard_${{ matrix.shard }}/
+          retention-days: 30
