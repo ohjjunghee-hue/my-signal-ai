@@ -19,7 +19,7 @@ LAST = {'mode': 'not_configured', 'last_saved': None, 'last_restored': None,
 MAX_BYTES = 100 * 1024 * 1024
 LOG = logging.getLogger(__name__)
 LAST.update(consecutive_failures=0, last_attempt=None, worker_alive=False,
-            worker_started=None, last_completed=None, last_duration_seconds=None)
+            worker_started=None, last_completed=None, last_duration_seconds=None, in_progress=False)
 
 
 def enabled():
@@ -92,6 +92,7 @@ def save(path):
     with LOCK:
         started = time.monotonic()
         LAST['last_attempt'] = int(time.time())
+        LAST['in_progress'] = True
         try:
             if not path.exists():
                 raise FileNotFoundError('SQLite database missing')
@@ -122,6 +123,7 @@ def save(path):
             LAST.update(mode='error', error=f'{type(e).__name__}: {str(e)[:160]}', warning='원격 저장 실패 · 확인 필요')
             return False
         finally:
+            LAST['in_progress'] = False
             LAST['last_completed'] = int(time.time())
             LAST['last_duration_seconds'] = round(time.monotonic() - started, 3)
 
@@ -147,6 +149,5 @@ def status():
                 stale=bool(enabled() and (last_saved is None or now-last_saved > 180)),
                 worker_stalled=bool(enabled() and LAST.get('worker_alive') and
                     LAST.get('last_attempt') is not None and
-                    (LAST.get('last_completed') is None or
-                     LAST['last_attempt'] > LAST['last_completed']) and
+                    LAST.get('in_progress', False) and
                     now-LAST['last_attempt'] > 120))
