@@ -49,13 +49,8 @@ def collect(market, unit, count=200, *, opener=None, pause=0.15):
         # Continue pagination until no progress or the API returns no bars.
         time.sleep(pause)
     rows=sorted(result.values(),key=lambda x:x['ts'])[-count:]
-    # Fail closed on unexpected API pagination holes rather than silently
-    # interpreting absent bars as continuous market history.
-    gaps=[(a['ts'],b['ts'],b['ts']-a['ts']) for a,b in zip(rows,rows[1:])
-          if b['ts']-a['ts']!=unit*60]
-    if gaps:
-        raise ValueError(f'{market} {unit}m has {len(gaps)} noncontiguous intervals; '
-                         f'first gap={gaps[0]}. Research sample rejected.')
+    # Keep authentic candles and let downstream research reject only windows
+    # that cross gaps. Never synthesize no-trade candles or fabricate prices.
     return rows
 
 def main():
