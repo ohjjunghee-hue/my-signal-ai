@@ -81,6 +81,10 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
         resolved_signal_times=[e['signal_close_ts'] for e in audit['events'] if e.get('status')=='RESOLVED']
         surge_coverage=surge_window_coverage(five,horizon_bars=36)
         recalls={}
+        recall_denominators={'all_base_buy_signal_times':len(set(signal_times)),
+                             'resolved_base_buy_signal_times':len(set(resolved_signal_times)),
+                             'unresolved_base_buy_signal_times':len(set(signal_times)-set(resolved_signal_times)),
+                             'independent_3h_assessable_windows':surge_coverage['assessable_windows']}
         for threshold in (3,10,50):
             events=surge_events(five,threshold_pct=threshold,horizon_bars=36,cooldown_bars=36)
             comparison=compare_candidates(events,signal_times,lead_minutes=5,lookback_minutes=180)
@@ -122,6 +126,7 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                          'unresolved_candidates':audit['unresolved'],
                          'hit_counts':audit['hit_counts'],
                          'recall':recalls,
+                         'recall_denominators':recall_denominators,
                          'candle_counts':{str(unit):len(json.loads((dest/f'{market}_{unit}m.json').read_text())) for unit in (5,15,60)}}
         (dest/f'{market}_continuity_segments.json').write_text(json.dumps(coverage,ensure_ascii=False,indent=2),encoding='utf-8')
         (dest/f'{market}_candidate_audit.json').write_text(json.dumps(audit,ensure_ascii=False,indent=2),encoding='utf-8')
