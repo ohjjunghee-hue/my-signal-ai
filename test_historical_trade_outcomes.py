@@ -24,6 +24,13 @@ class TradeOutcomeTests(unittest.TestCase):
         candles=[bar(ts) for ts in (300,600,900)]
         r=evaluate_outcomes([event(300),event(600)],candles,horizon_minutes=15)
         self.assertEqual(r['closed_count'],1)
+    def test_tp1_and_time_exit(self):
+        tp=evaluate_outcomes([event()], [bar(300,lo=99,hi=111)])
+        self.assertEqual(tp['trades'][0]['exit_reason'],'TP1')
+        self.assertEqual(tp['trades'][0]['net_pct'],9.8)
+        timed=evaluate_outcomes([event()], [bar(300,close=101),bar(600,close=102)],horizon_minutes=10)
+        self.assertEqual(timed['trades'][0]['exit_reason'],'TIME')
+        self.assertEqual(timed['trades'][0]['net_pct'],1.8)
     def test_no_trades_is_not_zero_percent(self):
         r=evaluate_outcomes([],[])
         self.assertIsNone(r['win_rate_pct'])
