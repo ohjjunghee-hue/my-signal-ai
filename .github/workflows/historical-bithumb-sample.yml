@@ -1,0 +1,31 @@
+name: Historical Bithumb sample (research only)
+on:
+  pull_request:
+    paths:
+      - 'historical_research_sample.py'
+      - 'historical_bithumb_collect.py'
+      - 'historical_candidate_audit.py'
+      - 'historical_surge_recall.py'
+      - '.github/workflows/historical-bithumb-sample.yml'
+  workflow_dispatch:
+jobs:
+  historical-sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Collect public historical candles and audit offline
+        run: python historical_research_sample.py
+      - name: Upload raw candles and reproducible research report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: historical-bithumb-sample
+          path: historical_data/
+          if-no-files-found: warn
+          retention-days: 7

@@ -1,0 +1,47 @@
+name: Paper exit audit read-only tests
+on:
+  pull_request:
+    paths:
+      - 'paper_exit_audit_readonly.py'
+      - 'test_paper_exit_audit_readonly.py'
+      - 'backup_offline_verify.py'
+      - 'test_backup_offline_verify.py'
+      - 'test_backup_producer_integration.py'
+      - 'test_backup_concurrent_writes.py'
+      - 'test_backup_restore_drill.py'
+      - 'test_buy_history_contract.py'
+      - 'server.py'
+      - 'index.html'
+      - 'test_buy_history_ui.py'
+      - 'historical_replay_readonly.py'
+      - 'test_historical_replay_readonly.py'
+      - 'historical_buy_adapter.py'
+      - 'test_historical_buy_adapter.py'
+      - 'historical_bithumb_collect.py'
+      - 'test_historical_bithumb_collect.py'
+      - 'historical_candidate_audit.py'
+      - 'test_historical_candidate_audit.py'
+      - 'historical_surge_recall.py'
+      - 'test_historical_surge_recall.py'
+      - 'historical_trade_outcomes.py'
+      - 'test_historical_trade_outcomes.py'
+      - 'historical_research_sample.py'
+      - 'test_historical_research_sample.py'
+      - 'historical_continuity_diagnostics.py'
+      - 'test_historical_continuity_diagnostics.py'
+      - 'historical_snapshot_compare.py'
+      - 'test_historical_snapshot_compare.py'
+      - 'historical_candle_integrity.py'
+      - 'test_historical_candle_integrity test_historical_gap_requery test_historical_gap_crossframe test_historical_missed_surge_diagnostics test_historical_gate_failure_summary.py'
+      - '.github/workflows/paper-exit-audit.yml'
+  workflow_dispatch:
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Test sampled exit audit
+        run: python -m unittest -v test_paper_exit_audit_readonly test_backup_offline_verify test_backup_producer_integration test_backup_concurrent_writes test_backup_restore_drill test_buy_history_contract test_buy_history_ui test_historical_replay_readonly test_historical_buy_adapter test_historical_bithumb_collect test_historical_candidate_audit test_historical_surge_recall test_historical_trade_outcomes test_historical_research_sample test_historical_continuity_diagnostics test_historical_snapshot_compare test_historical_candle_integrity

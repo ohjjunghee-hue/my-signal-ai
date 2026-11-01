@@ -4,6 +4,7 @@ A backup must not expose account secrets or be served without ACCESS_TOKEN.
 SQLite backup API gives a consistent snapshot even with concurrent writers.
 """
 import io
+import hashlib
 import sqlite3
 import tempfile
 import pathlib
@@ -28,5 +29,5 @@ def make_backup(db_path):
         out=io.BytesIO()
         with zipfile.ZipFile(out,'w',compression=zipfile.ZIP_DEFLATED) as archive:
             archive.write(snapshot,"signals.db")
-            archive.writestr("manifest.json",json.dumps({"created_utc":int(time.time()),"integrity":"ok","table_counts":counts},ensure_ascii=False,indent=2))
+            archive.writestr("manifest.json",json.dumps({"created_utc":int(time.time()),"integrity":"ok","table_counts":counts,"sha256":hashlib.sha256(snapshot.read_bytes()).hexdigest()},ensure_ascii=False,indent=2))
         return out.getvalue()
