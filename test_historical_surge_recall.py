@@ -27,6 +27,7 @@ class RecallTests(unittest.TestCase):
   r=surge_window_coverage(candles(12),horizon_bars=10)
   self.assertEqual(r['assessable_windows'],2)
   self.assertEqual(r['assessable_pct'],100.0)
+  self.assertEqual(r['status'],'FULLY_EVALUABLE')
   self.assertEqual(r['unresolved_gap_windows'],0)
  def test_coverage_gap_windows(self):
   rows=candles(12)
