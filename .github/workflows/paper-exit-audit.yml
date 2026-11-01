@@ -1,0 +1,18 @@
+name: Paper exit audit read-only tests
+on:
+  pull_request:
+    paths:
+      - 'paper_exit_audit_readonly.py'
+      - 'test_paper_exit_audit_readonly.py'
+      - '.github/workflows/paper-exit-audit.yml'
+  workflow_dispatch:
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Test sampled exit audit
+        run: python -m unittest -v test_paper_exit_audit_readonly
