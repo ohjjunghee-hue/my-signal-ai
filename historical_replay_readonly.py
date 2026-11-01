@@ -31,7 +31,7 @@ def replay(candles, signal_fn, *, max_holding_bars=12, fee_roundtrip_pct=0.2):
         target=float(signal["target"])
         entry_idx=i+1
         entry=float(rows[entry_idx]["open"])
-        if not (math.isfinite(stop) and math.isfinite(target) and 0<stop<entry<target):
+        if not (math.isfinite(stop) and math.isfinite(target) and 0<stop<target and entry<target):
             i+=1
             continue
         end=min(entry_idx+max_holding_bars-1,len(rows)-1)
