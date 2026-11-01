@@ -493,12 +493,17 @@ def analyze_market(ticker, name, source):
     r=analyze(c5,c15,c60,price,float(ticker.get('signed_change_rate') or 0)*100)
     if r.get('status')=='BUY':
         try:
-            frames={'4h':four_hour(c60)}
+            frames={'4h':fetch_candles(market,240,80)}
+            frames['4h']=[{'c':x['c']} for x in frames['4h']]
+            for unit,label in ((1,'1m'),(3,'3m'),(5,'5m'),(10,'10m'),(15,'15m'),(30,'30m'),(60,'1h')):
+                series=c5 if unit==5 else c15 if unit==15 else c60 if unit==60 else fetch_candles(market,unit,45)
+                frames[label]=[{'c':x['c']} for x in series]
             for name,period in (('day','days'),('week','weeks'),('month','months')):
                 frames[name]=fetch_calendar(market,period)
             gate=v49_gate.evaluate(frames)
         except Exception:
             gate={'allowed':False,'verdict':'DATA','reasons':['상위 시간대 조회 실패'],'frames':{}}
+        gate['timeframes_checked']=sorted(frames) if 'frames' in locals() and gate['verdict']!='DATA' else []
         r['higher_timeframe_gate']=gate
         if not gate['allowed']:
             r['status']='WAIT'
