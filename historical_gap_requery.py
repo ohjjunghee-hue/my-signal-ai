@@ -22,6 +22,17 @@ def gap_timestamps(rows, *, unit=5, limit=10):
             if len(gaps)>=limit:return gaps
     return gaps
 
+def sampled_gap_timestamps(rows, *, unit=5, limit=3):
+    """Choose gaps across the time range, not only the oldest missing bars."""
+    if unit not in (5,15,60) or limit<1:
+        raise ValueError('invalid unit or limit')
+    times=sorted({int(x['ts']) for x in rows})
+    spans=[(a,b) for a,b in zip(times,times[1:]) if b-a>unit*60]
+    if not spans:return []
+    # Choose spread-out missing intervals with bounded memory and requests.
+    positions=sorted({(i*(len(spans)-1))//max(1,limit-1) for i in range(limit)})
+    return [spans[i][0]+unit*60 for i in positions][:limit]
+
 def requery_gap(market, missing_ts, *, unit=5, opener=None):
     if not market.startswith('KRW-') or unit not in (5,15,60):
         raise ValueError('invalid market or unit')
