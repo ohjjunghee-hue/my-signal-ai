@@ -59,12 +59,16 @@ def evaluate_market(market, data_dir, analyzer, *, horizon_minutes=180):
                        'reconstructed':True,'final_live_buy_verified':False})
     resolved=[e for e in events if e['status']=='RESOLVED']
     gains=[e['max_future_high_pct'] for e in resolved]
+    unique_entries=len({e.get('entry_ts') for e in resolved})
+    duplicate_entries=len(resolved)-unique_entries
     return {'market':market,'horizon_minutes':horizon_minutes,
             'base_buy_events':len(events),'eligible_evaluations':eligible_evaluations,
             'insufficient_evaluations':insufficient_evaluations,
             'insufficient_reasons':insufficient_reasons,
             'status_counts':status_counts,'buy_gate_fail_counts':gate_fail_counts,
             'resolved':len(resolved),
+            'unique_entry_times':unique_entries,
+            'repeated_entry_signals':duplicate_entries,
             'max_future_high_pct_summary':{'min':min(gains) if gains else None,
                                            'mean':round(sum(gains)/len(gains),6) if gains else None,
                                            'max':max(gains) if gains else None},
