@@ -40,12 +40,20 @@ def collect(market, unit, count=200, *, opener=None, pause=0.15):
                  'volume':float(x['candle_acc_trade_volume'])}
             if ts+unit*60<=time.time():result[ts]=bar
         if oldest is None:break
-        next_before=datetime.fromtimestamp(oldest,timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
+        next_before=datetime.fromtimestamp(oldest,timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         if before==next_before:break
         before=next_before
         if len(payload)<params['count']:break
         time.sleep(pause)
-    return sorted(result.values(),key=lambda x:x['ts'])[-count:]
+    rows=sorted(result.values(),key=lambda x:x['ts'])[-count:]
+    # Fail closed on unexpected API pagination holes rather than silently
+    # interpreting absent bars as continuous market history.
+    gaps=[(a['ts'],b['ts'],b['ts']-a['ts']) for a,b in zip(rows,rows[1:])
+          if b['ts']-a['ts']!=unit*60]
+    if gaps:
+        raise ValueError(f'{market} {unit}m has {len(gaps)} noncontiguous intervals; '
+                         f'first gap={gaps[0]}. Research sample rejected.')
+    return rows
 
 def main():
     p=argparse.ArgumentParser()
