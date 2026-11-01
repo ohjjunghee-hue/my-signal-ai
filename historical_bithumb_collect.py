@@ -20,6 +20,7 @@ def collect(market, unit, count=200, *, opener=None, pause=0.15):
     request=opener or urllib.request.urlopen
     result={}
     before=None
+    previous_oldest=None
     while len(result)<count:
         params={'market':market,'count':min(200,count-len(result))}
         if before:params['to']=before
@@ -40,6 +41,11 @@ def collect(market, unit, count=200, *, opener=None, pause=0.15):
                  'volume':float(x['candle_acc_trade_volume'])}
             if ts+unit*60<=time.time():result[ts]=bar
         if oldest is None:break
+        # A repeated or forward-moving oldest candle means pagination stalled.
+        # Stop rather than loop indefinitely or mistake duplicates for history.
+        if previous_oldest is not None and oldest>=previous_oldest:
+            break
+        previous_oldest=oldest
         # Bithumb's `to` parameter is interpreted in KST even though
         # response candle_date_time_utc is UTC. Convert cursor explicitly.
         next_before=datetime.fromtimestamp(oldest,timezone(timedelta(hours=9))).strftime('%Y-%m-%dT%H:%M:%S')
