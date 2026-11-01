@@ -6,6 +6,7 @@ from collections import Counter
 import outcome_validation as ov
 import paper_bridge
 import account_readonly
+import v49_gate
 from datetime import datetime, timezone, timedelta
 ROOT=pathlib.Path(__file__).parent
 DATA_DIR=pathlib.Path(os.getenv("DATA_DIR",str(ROOT/"data")))
@@ -473,12 +474,38 @@ def pulse_loop():
             with lock:state['errors']=(state.get('errors',[])+['빠른 시장 감시: '+str(e)[:120]])[-30:]
         time.sleep(max(45,int(os.getenv('PULSE_SECONDS','60'))))
 
+def fetch_calendar(market,period):
+    if period not in ('days','weeks','months'):raise ValueError('period')
+    rows=get_json('/v1/candles/'+period+'?market='+market+'&count=60')
+    if not isinstance(rows,list) or len(rows)<21:raise ValueError('candles')
+    return [{'c':float(x['trade_price'])} for x in reversed(rows[1:])]
+
+def four_hour(c60):
+    buckets={}
+    for c in c60:buckets.setdefault(int(c['t'])//14400,[]).append(c)
+    return [{'c':v[-1]['c']} for _,v in sorted(buckets.items()) if len(v)==4]
+
 def analyze_market(ticker, name, source):
     market=ticker['market'];price=float(ticker['trade_price'])
     c5=fetch_candles(market,5)
     c15=fetch_candles(market,15)
     c60=fetch_candles(market,60)
     r=analyze(c5,c15,c60,price,float(ticker.get('signed_change_rate') or 0)*100)
+    if r.get('status')=='BUY':
+        try:
+            frames={'4h':four_hour(c60)}
+            for name,period in (('day','days'),('week','weeks'),('month','months')):
+                frames[name]=fetch_calendar(market,period)
+            gate=v49_gate.evaluate(frames)
+        except Exception:
+            gate={'allowed':False,'verdict':'DATA','reasons':['상위 시간대 조회 실패'],'frames':{}}
+        r['higher_timeframe_gate']=gate
+        if not gate['allowed']:
+            r['status']='WAIT'
+            r['decision']='WAIT'
+            r['decision_reason']='상위 시간대 위험 차단: '+', '.join(gate['reasons'])
+            r['risk']=list(r.get('risk',[]))+gate['reasons']
+            r['buy_suitability']=min(r.get('buy_suitability',0),30)
     r.update(selection_source=source,market=market,name=name,price=price,
              change24=round(float(ticker.get('signed_change_rate') or 0)*100,2),
              volume24=float(ticker.get('acc_trade_price_24h') or 0),time=int(time.time()))
