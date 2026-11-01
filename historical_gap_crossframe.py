@@ -7,13 +7,16 @@ def cross_timeframe_gap_evidence(missing_timestamps, five_rows, fifteen_rows):
     five={int(x['ts']):x for x in five_rows}
     fifteen={int(x['ts']):x for x in fifteen_rows}
     results=[]
+    fifteen_bounds=(min(fifteen),max(fifteen)) if fifteen else None
     for ts in missing_timestamps:
         ts=int(ts)
         if ts%300:raise ValueError('missing timestamp not 5-minute aligned')
         bucket=ts-ts%900
         aggregate=fifteen.get(bucket)
         existing=[t for t in (bucket,bucket+300,bucket+600) if t in five]
-        if aggregate is None:
+        if fifteen_bounds is None or not (fifteen_bounds[0]<=bucket<=fifteen_bounds[1]):
+            status='OUTSIDE_15M_HISTORY'
+        elif aggregate is None:
             status='NO_15M_AGGREGATE'
         elif len(existing)==3:
             status='ALL_5M_PRESENT'
