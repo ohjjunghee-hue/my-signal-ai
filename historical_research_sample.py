@@ -9,6 +9,7 @@ from historical_bithumb_collect import collect
 from historical_candidate_audit import evaluate_market
 from historical_surge_recall import surge_events, compare_candidates
 from historical_trade_outcomes import evaluate_outcomes
+from historical_continuity_diagnostics import coverage_report
 from server import analyze
 
 def classify_recall(comparison, eligible_evaluations):
@@ -48,7 +49,10 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                                    'last_ts':frame[-1]['ts'] if frame else None,
                                    'gap_count':len(gaps),
                                    'max_gap_seconds':max(gaps) if gaps else 0}
+        coverage={str(unit):coverage_report(json.loads((dest/f'{market}_{unit}m.json').read_text()),unit,289 if unit==5 else 35)
+                  for unit in (5,15,60)}
         results[market]={'candle_continuity':continuity,
+                         'continuous_window_coverage':{unit:{k:v for k,v in report.items() if k!='segments'} for unit,report in coverage.items()},
                          'base_buy_candidates':audit['base_buy_events'],
                          'eligible_evaluations':audit['eligible_evaluations'],
                          'insufficient_evaluations':audit['insufficient_evaluations'],
@@ -66,6 +70,7 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                          'hit_counts':audit['hit_counts'],
                          'recall':recalls,
                          'candle_counts':{str(unit):len(json.loads((dest/f'{market}_{unit}m.json').read_text())) for unit in (5,15,60)}}
+        (dest/f'{market}_continuity_segments.json').write_text(json.dumps(coverage,ensure_ascii=False,indent=2),encoding='utf-8')
         (dest/f'{market}_candidate_audit.json').write_text(json.dumps(audit,ensure_ascii=False,indent=2),encoding='utf-8')
     totals={'eligible_evaluations':sum(x['eligible_evaluations'] for x in results.values()),
             'insufficient_evaluations':sum(x['insufficient_evaluations'] for x in results.values()),
