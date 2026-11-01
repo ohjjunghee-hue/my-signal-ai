@@ -88,15 +88,18 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                              'resolved_base_buy_signal_times':len(set(resolved_signal_times)),
                              'unresolved_base_buy_signal_times':len(set(signal_times)-set(resolved_signal_times)),
                              'independent_3h_assessable_windows':surge_coverage['assessable_windows']}
-        for threshold in (3,10,50):
-            events=surge_events(five,threshold_pct=threshold,horizon_bars=36,cooldown_bars=36)
-            comparison=compare_candidates(events,signal_times,lead_minutes=5,lookback_minutes=180)
-            diagnostic_times=sorted({ts for event in events for ts in range(int(event['hit_ts'])-180*60,int(event['hit_ts']),300)})
+        surge_events_by_threshold={threshold:surge_events(five,threshold_pct=threshold,horizon_bars=36,cooldown_bars=36) for threshold in (3,10,50)}
+        diagnostic_times=sorted({ts for events in surge_events_by_threshold.values()
+                                 for event in events for ts in range(int(event['hit_ts'])-180*60,int(event['hit_ts']),300)})
+        diagnostic_rows=[]
+        if diagnostic_times:
             frames={unit:json.loads((dest/f'{market}_{unit}m.json').read_text()) for unit in (5,15,60)}
-            diagnostic_rows=[]
             for ts in diagnostic_times:
                 evaluated=historical_base_signal(analyze,frames[5],frames[15],frames[60],ts)
                 diagnostic_rows.append({'close_ts':ts,**evaluated})
+        for threshold in (3,10,50):
+            events=surge_events_by_threshold[threshold]
+            comparison=compare_candidates(events,signal_times,lead_minutes=5,lookback_minutes=180)
             missed_surge_diagnostics[str(threshold)]=missed_surge_gate_diagnostics(events,diagnostic_rows)
             recalls[str(threshold)]=classify_recall(comparison,audit['eligible_evaluations'],surge_coverage)
             verified_comparison=compare_candidates(events,resolved_signal_times,lead_minutes=5,lookback_minutes=180)
