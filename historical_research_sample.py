@@ -43,6 +43,7 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                          'status_counts':audit['status_counts'],
                          'buy_gate_fail_counts':audit['buy_gate_fail_counts'],
                          'resolved_candidates':audit['resolved'],
+                         'max_future_high_pct_summary':audit['max_future_high_pct_summary'],
                          'unresolved_candidates':audit['unresolved'],
                          'hit_counts':audit['hit_counts'],
                          'recall':recalls,
