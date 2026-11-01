@@ -13,5 +13,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Compile storage modules and tests
+        run: python -m compileall -q v47_storage.py test_v47_storage_observability.py test_v47_storage_roundtrip.py
       - name: Run isolated storage regression tests
         run: python -m unittest test_v47_storage_observability test_v47_storage_roundtrip -v
