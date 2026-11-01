@@ -61,6 +61,12 @@ def evaluate_market(market, data_dir, analyzer, *, horizon_minutes=180):
     gains=[e['max_future_high_pct'] for e in resolved]
     unique_entries=len({e.get('entry_ts') for e in resolved})
     duplicate_entries=len(resolved)-unique_entries
+    # Research-only event clustering: multiple BUY bars inside the same
+    # 3-hour outcome window are one candidate episode, not independent trades.
+    episode_starts=[]
+    for event in sorted(resolved,key=lambda x:x['entry_ts']):
+        if not episode_starts or event['entry_ts']>=episode_starts[-1]+horizon_minutes*60:
+            episode_starts.append(event['entry_ts'])
     return {'market':market,'horizon_minutes':horizon_minutes,
             'base_buy_events':len(events),'eligible_evaluations':eligible_evaluations,
             'insufficient_evaluations':insufficient_evaluations,
@@ -69,6 +75,8 @@ def evaluate_market(market, data_dir, analyzer, *, horizon_minutes=180):
             'resolved':len(resolved),
             'unique_entry_times':unique_entries,
             'repeated_entry_signals':duplicate_entries,
+            'candidate_episodes':len(episode_starts),
+            'signals_within_existing_episode':len(resolved)-len(episode_starts),
             'max_future_high_pct_summary':{'min':min(gains) if gains else None,
                                            'mean':round(sum(gains)/len(gains),6) if gains else None,
                                            'max':max(gains) if gains else None},
