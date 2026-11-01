@@ -39,8 +39,8 @@ class CollectorTests(unittest.TestCase):
         def gapped(req,timeout):
             return Response(json.dumps([row(900),row(0)]).encode())
         with patch('historical_bithumb_collect.time.time',return_value=2000):
-            with self.assertRaisesRegex(ValueError,'noncontiguous'):
-                collect('KRW-BTC',5,2,opener=gapped,pause=0)
+            sparse=collect('KRW-BTC',5,2,opener=gapped,pause=0)
+        self.assertEqual([x['ts'] for x in sparse],[0,900])
     def test_rejects_invalid_requests(self):
         with self.assertRaises(ValueError):collect('BTC-KRW',5)
         with self.assertRaises(ValueError):collect('KRW-BTC',1)
