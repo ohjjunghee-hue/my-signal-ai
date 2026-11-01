@@ -851,6 +851,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path=='/api/setup-events':
             with sqlite3.connect(DB) as con:rows=read_setup_events(con,100)
             data=json.dumps(rows,ensure_ascii=False).encode();typ='application/json; charset=utf-8'
+        elif path=='/api/buy-history':
+            # Read-only historical BUY transitions. Unlike active_setups, events
+            # survive status changes and are never represented as current BUY.
+            requested=urllib.parse.parse_qs(parsed.query).get('limit',['200'])[0]
+            try:limit=max(1,min(500,int(requested)))
+            except (ValueError,TypeError):limit=200
+            with sqlite3.connect(DB) as con:
+                rows=con.execute(
+                    "SELECT market,ts,previous,new_status,price,reason FROM setup_events "
+                    "WHERE new_status='BUY' ORDER BY ts DESC,id DESC LIMIT ?",(limit,)
+                ).fetchall()
+            data=json.dumps({'rows':[dict(zip(('market','ts','previous','new_status','price','reason'),r)) for r in rows],
+                'note':'과거 BUY 신호 기록입니다. 현재 매수 상태나 체결 내역을 뜻하지 않습니다.'},
+                ensure_ascii=False,allow_nan=False).encode();typ='application/json; charset=utf-8'
         elif path=='/api/tracked':
             with sqlite3.connect(DB) as con:rows=read_setups(con,int(time.time()))
             data=json.dumps({'rows':rows,'note':'최초 관찰가 대비 변화. BUY는 기술 조건 신호이며 수익성 미검증. 오래된 분석은 별도 표시.'},ensure_ascii=False).encode();typ='application/json; charset=utf-8'
