@@ -8,6 +8,7 @@ from pathlib import Path
 from historical_bithumb_collect import collect
 from historical_candidate_audit import evaluate_market
 from historical_surge_recall import surge_events, compare_candidates
+from historical_trade_outcomes import evaluate_outcomes
 from server import analyze
 
 def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,out_dir='historical_data'):
@@ -19,6 +20,8 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
             (dest/f'{market}_{unit}m.json').write_text(json.dumps(rows),encoding='utf-8')
         audit=evaluate_market(market,dest,analyze,horizon_minutes=180)
         five=json.loads((dest/f'{market}_5m.json').read_text())
+        trade_outcomes=evaluate_outcomes(audit['events'],five)
+        (dest/f'{market}_trade_outcomes.json').write_text(json.dumps(trade_outcomes,ensure_ascii=False,indent=2),encoding='utf-8')
         signal_times=[e['signal_close_ts'] for e in audit['events'] if e.get('signal_close_ts')]
         recalls={}
         for threshold in (3,10,50):
@@ -46,6 +49,7 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                          'unique_entry_times':audit['unique_entry_times'],
                          'repeated_entry_signals':audit['repeated_entry_signals'],
                          'candidate_episodes':audit['candidate_episodes'],
+                         'trade_outcomes':{k:v for k,v in trade_outcomes.items() if k!='trades'},
                          'signals_within_existing_episode':audit['signals_within_existing_episode'],
                          'max_future_high_pct_summary':audit['max_future_high_pct_summary'],
                          'unresolved_candidates':audit['unresolved'],
@@ -61,6 +65,7 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
             'limitations':['base analyze only; V49 gate not reconstructed',
                            'closed-candle proxy 24h return differs from exchange ticker',
                            'max future high is not executable profit',
+                           'trade outcomes are simulated with assumed 0.2% costs; no slippage/spread or real fills',
                            'only sampled markets and historical period; not overall recall',
                            'event windows overlap; cooldown is a research assumption']}
     (dest/'research_summary.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
