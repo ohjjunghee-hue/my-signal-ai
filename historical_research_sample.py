@@ -14,9 +14,9 @@ from historical_snapshot_compare import compare_snapshots
 from historical_candle_integrity import validate_candles
 from server import analyze
 
-def classify_recall(comparison, eligible_evaluations):
+def classify_recall(comparison, eligible_evaluations, surge_coverage=None):
     """Do not score signal recall when no historical BUY evaluations were possible."""
-    if eligible_evaluations == 0:
+    if eligible_evaluations == 0 or (surge_coverage is not None and surge_coverage['assessable_windows']==0):
         return {'surge_events':comparison['events'],
                 'early_base_buy_candidates':comparison['detected'],
                 'recall_pct':None,
@@ -57,7 +57,7 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
         for threshold in (3,10,50):
             events=surge_events(five,threshold_pct=threshold,horizon_bars=36,cooldown_bars=36)
             comparison=compare_candidates(events,signal_times,lead_minutes=5,lookback_minutes=180)
-            recalls[str(threshold)]=classify_recall(comparison,audit['eligible_evaluations'])
+            recalls[str(threshold)]=classify_recall(comparison,audit['eligible_evaluations'],surge_coverage)
         continuity={}
         for unit in (5,15,60):
             frame=json.loads((dest/f'{market}_{unit}m.json').read_text())
