@@ -17,10 +17,21 @@ def evaluate_market(market, data_dir, analyzer, *, horizon_minutes=180):
     five=sorted(candles[5],key=lambda r:r['ts'])
     if len({r['ts'] for r in five})!=len(five):raise ValueError('duplicate 5m candle')
     events=[]
+    status_counts={}
+    gate_fail_counts={}
+    eligible_evaluations=0
+    insufficient_evaluations=0
     for i in range(len(five)-1):
         bar=five[i]
         close_ts=bar['ts']+300
         r=historical_base_signal(analyzer,candles[5],candles[15],candles[60],close_ts)
+        if r.get('status')=='INSUFFICIENT_HISTORY':
+            insufficient_evaluations+=1
+            continue
+        eligible_evaluations+=1
+        status_counts[r['status']]=status_counts.get(r['status'],0)+1
+        for gate,passed in r.get('buy_gates',{}).items():
+            if not passed:gate_fail_counts[gate]=gate_fail_counts.get(gate,0)+1
         if not r.get('base_buy_candidate'):continue
         # The reference price is the next bar OPEN, never the signal bar close.
         next_bar=five[i+1]
@@ -45,7 +56,10 @@ def evaluate_market(market, data_dir, analyzer, *, horizon_minutes=180):
                        'reconstructed':True,'final_live_buy_verified':False})
     resolved=[e for e in events if e['status']=='RESOLVED']
     return {'market':market,'horizon_minutes':horizon_minutes,
-            'base_buy_events':len(events),'resolved':len(resolved),
+            'base_buy_events':len(events),'eligible_evaluations':eligible_evaluations,
+            'insufficient_evaluations':insufficient_evaluations,
+            'status_counts':status_counts,'buy_gate_fail_counts':gate_fail_counts,
+            'resolved':len(resolved),
             'unresolved':len(events)-len(resolved),
             'hit_counts':{str(k):sum(e[f'reached_{k}pct'] for e in resolved) for k in (3,10,50)},
             'events':events,'disclaimer':'Base BUY reconstruction only; not actual BUY logs, not fills, not full live V49 gate.'}
