@@ -53,6 +53,7 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                   for unit in (5,15,60)}
         results[market]={'candle_continuity':continuity,
                          'continuous_window_coverage':{unit:{k:v for k,v in report.items() if k!='segments'} for unit,report in coverage.items()},
+                         'history_evaluation_status':'NOT_EVALUABLE_HISTORY' if audit['eligible_evaluations']==0 else 'PARTIALLY_EVALUABLE',
                          'base_buy_candidates':audit['base_buy_events'],
                          'eligible_evaluations':audit['eligible_evaluations'],
                          'insufficient_evaluations':audit['insufficient_evaluations'],
