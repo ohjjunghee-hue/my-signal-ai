@@ -35,7 +35,7 @@ class CollectorTests(unittest.TestCase):
         with patch('historical_bithumb_collect.time.time',return_value=2000):
             result=collect('KRW-BTC',5,4,opener=opener,pause=0)
         self.assertEqual([x['ts'] for x in result],[0,300,600,900])
-        self.assertIn('Z',calls[1])
+        self.assertIn('to=1970-01-01T09%3A10%3A00',calls[1])
         def gapped(req,timeout):
             return Response(json.dumps([row(900),row(0)]).encode())
         with patch('historical_bithumb_collect.time.time',return_value=2000):
