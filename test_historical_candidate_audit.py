@@ -21,6 +21,8 @@ class AuditTests(unittest.TestCase):
                         'entry':p,'stop':90,'targets':[110]}
             result=evaluate_market('KRW-TEST',root,analyzer,horizon_minutes=10)
             self.assertEqual(result['resolved'],1)
+            self.assertGreater(result['eligible_evaluations'],0)
+            self.assertIn('BUY',result['status_counts'])
             self.assertEqual(result['hit_counts']['50'],1)
             self.assertFalse(result['events'][0]['final_live_buy_verified'])
     def test_no_signal_is_not_success(self):
@@ -30,5 +32,7 @@ class AuditTests(unittest.TestCase):
                 (root/f'KRW-TEST_{u}m.json').write_text(json.dumps(bars(u,310)))
             result=evaluate_market('KRW-TEST',root,lambda *args:{'status':'WAIT'})
             self.assertEqual(result['base_buy_events'],0)
+            self.assertEqual(result['eligible_evaluations'],0)
+            self.assertGreater(result['insufficient_evaluations'],0)
             self.assertEqual(result['hit_counts']['3'],0)
 if __name__=='__main__':unittest.main()
