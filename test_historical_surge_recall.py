@@ -1,5 +1,5 @@
 import unittest
-from historical_surge_recall import surge_events,compare_candidates
+from historical_surge_recall import surge_events,compare_candidates,surge_window_coverage
 def candles(n=50):
  return [{'ts':i*300,'close':100,'high':100,'open':100,'low':99} for i in range(n)]
 class RecallTests(unittest.TestCase):
@@ -23,4 +23,15 @@ class RecallTests(unittest.TestCase):
   rows=candles(12);rows[5]['high']=150
   for x in rows[5:]:x['ts']+=300
   self.assertEqual(surge_events(rows,threshold_pct=10,horizon_bars=10),[])
+ def test_coverage_contiguous_windows(self):
+  r=surge_window_coverage(candles(12),horizon_bars=10)
+  self.assertEqual(r['assessable_windows'],2)
+  self.assertEqual(r['unresolved_gap_windows'],0)
+ def test_coverage_gap_windows(self):
+  rows=candles(12)
+  for x in rows[5:]:x['ts']+=300
+  r=surge_window_coverage(rows,horizon_bars=10)
+  self.assertEqual(r['assessable_windows'],0)
+  self.assertEqual(r['unresolved_gap_windows'],2)
+  self.assertEqual(r['status'],'NOT_EVALUABLE_HISTORY')
 if __name__=='__main__':unittest.main()
