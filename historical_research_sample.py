@@ -39,6 +39,7 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                          'base_buy_candidates':audit['base_buy_events'],
                          'eligible_evaluations':audit['eligible_evaluations'],
                          'insufficient_evaluations':audit['insufficient_evaluations'],
+                         'insufficient_reasons':audit['insufficient_reasons'],
                          'status_counts':audit['status_counts'],
                          'buy_gate_fail_counts':audit['buy_gate_fail_counts'],
                          'resolved_candidates':audit['resolved'],
