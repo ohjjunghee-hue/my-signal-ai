@@ -19,4 +19,11 @@ class CandleIntegrityTests(unittest.TestCase):
         self.assertIn('nonfinite_close',validate_candles([bar(close=float('nan'))],5)['invalid'][0]['problems'])
     def test_duplicate_timestamp(self):
         self.assertEqual(validate_candles([bar(),bar()],5)['invalid_count'],1)
+    def test_out_of_order_raw_rows(self):
+        r=validate_candles([bar(600),bar(300)],5)
+        self.assertEqual(r['invalid_count'],1)
+        self.assertIn('out_of_order_timestamp',r['invalid'][0]['problems'])
+    def test_duplicate_flag_is_specific(self):
+        r=validate_candles([bar(),bar()],5)
+        self.assertIn('duplicate_timestamp',r['invalid'][0]['problems'])
 if __name__=='__main__':unittest.main()
