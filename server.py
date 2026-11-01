@@ -501,6 +501,20 @@ def analyze_market(ticker, name, source):
             for name,period in (('day','days'),('week','weeks'),('month','months')):
                 frames[name]=fetch_calendar(market,period)
             gate=v49_gate.evaluate(frames)
+            short_names=('1m','3m','5m','10m','15m','30m','1h')
+            short_metrics={}
+            for label in short_names:
+                closes=[float(c['c']) for c in frames[label]]
+                if len(closes)<20 or not all(math.isfinite(p) and p>0 for p in closes):
+                    raise ValueError('분봉 데이터 부족')
+                avg=statistics.mean(closes[-20:])
+                short_metrics[label]={'close':round(closes[-1],8),'ma20':round(avg,8),
+                    'above_ma20':closes[-1]>=avg}
+            gate['short_timeframes']=short_metrics
+            if not short_metrics['30m']['above_ma20'] and not short_metrics['1h']['above_ma20']:
+                gate['allowed']=False
+                gate['verdict']='AVOID'
+                gate['reasons'].append('30분·1시간봉 모두 20봉 평균 아래')
         except Exception:
             gate={'allowed':False,'verdict':'DATA','reasons':['상위 시간대 조회 실패'],'frames':{}}
         gate['timeframes_checked']=sorted(frames) if 'frames' in locals() and gate['verdict']!='DATA' else []
