@@ -4,6 +4,7 @@ Requires DATABASE_URL pointing to a user-owned PostgreSQL database.
 The snapshot is not a substitute for a continuously running worker.
 """
 import hashlib
+import logging
 import os
 import pathlib
 import sqlite3
@@ -15,6 +16,8 @@ LOCK = threading.RLock()
 LAST = {'mode': 'not_configured', 'last_saved': None, 'last_restored': None,
         'error': None, 'snapshot_bytes': None, 'warning': '영구 저장소 미연결: 재배포 시 기록 유실 가능'}
 MAX_BYTES = 100 * 1024 * 1024
+LOG = logging.getLogger(__name__)
+LAST.update(consecutive_failures=0, last_attempt=None, worker_alive=False)
 
 
 def enabled():
@@ -85,8 +88,10 @@ def save(path):
         LAST.update(mode='not_configured', warning='영구 저장소 미연결: 재배포 시 기록 유실 가능')
         return False
     with LOCK:
+        LAST['last_attempt'] = int(time.time())
         try:
-            if not path.exists(): return False
+            if not path.exists():
+                raise FileNotFoundError('SQLite database missing')
             fd, tmp = tempfile.mkstemp(prefix='.v47-backup-', suffix='.db')
             os.close(fd)
             try:
@@ -104,19 +109,31 @@ def save(path):
                   VALUES(%s,%s,%s,%s) ON CONFLICT(snapshot_key) DO UPDATE SET
                   payload=EXCLUDED.payload,sha256=EXCLUDED.sha256,saved_at=EXCLUDED.saved_at''',
                   ('main', payload, checksum, now))
+            LAST['consecutive_failures'] = 0
             LAST.update(mode='remote_saved', last_saved=now, snapshot_bytes=len(payload),
                         error=None, warning='원격 스냅샷 저장 성공 · 최근 저장 이후 기록은 유실 가능')
             return True
         except Exception as e:
+            LAST['consecutive_failures'] += 1
+            LOG.error('V47 snapshot save failed (consecutive=%d): %s: %s', LAST['consecutive_failures'], type(e).__name__, str(e)[:160])
             LAST.update(mode='error', error=f'{type(e).__name__}: {str(e)[:160]}', warning='원격 저장 실패 · 확인 필요')
             return False
 
 
 def run(path, interval=30):
-    while True:
-        save(path)
-        time.sleep(interval)
+    LAST['worker_alive'] = True
+    try:
+        while True:
+            save(path)
+            time.sleep(interval)
+    finally:
+        LAST['worker_alive'] = False
+        LOG.error('V47 snapshot worker stopped unexpectedly')
 
 
 def status():
-    return dict(LAST, configured=enabled(), now=int(time.time()))
+    now = int(time.time())
+    last_saved = LAST.get('last_saved')
+    return dict(LAST, configured=enabled(), now=now,
+                snapshot_age_seconds=(now-last_saved if last_saved is not None else None),
+                stale=bool(enabled() and last_saved is not None and now-last_saved > 180))
