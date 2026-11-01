@@ -16,6 +16,7 @@ from historical_gap_requery import sampled_gap_timestamps, requery_gap
 from historical_gap_crossframe import cross_timeframe_gap_evidence
 from historical_buy_adapter import historical_base_signal
 from historical_missed_surge_diagnostics import missed_surge_gate_diagnostics
+from historical_gate_failure_summary import summarize_missed_surge_gates
 from server import analyze
 
 def classify_recall(comparison, eligible_evaluations, surge_coverage=None):
@@ -140,6 +141,7 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                          'hit_counts':audit['hit_counts'],
                          'recall':recalls,
                          'missed_surge_diagnostics':missed_surge_diagnostics,
+                         'missed_surge_gate_summary':summarize_missed_surge_gates(missed_surge_diagnostics),
                          'recall_denominators':recall_denominators,
                          'candle_counts':{str(unit):len(json.loads((dest/f'{market}_{unit}m.json').read_text())) for unit in (5,15,60)}}
         (dest/f'{market}_continuity_segments.json').write_text(json.dumps(coverage,ensure_ascii=False,indent=2),encoding='utf-8')
