@@ -11,11 +11,13 @@ def surge_events(bars, *, threshold_pct, horizon_bars=36, cooldown_bars=36):
         raise ValueError('duplicate timestamps')
     found=[]
     i=0
+    # Only actual contiguous 5-minute observations can establish a 3h event.
+    # Sparse exchange candles are not interpreted as confirmed non-events.
     while i+horizon_bars<len(rows):
         base=rows[i]
         future=rows[i+1:i+1+horizon_bars]
         # No trades or sparse bars: unknown, not a confirmed negative.
-        if any(b['ts']-a['ts']!=300 for a,b in zip(rows[i:i+1+horizon_bars],rows[i+1:i+2+horizon_bars])):
+        if any(b['ts']-a['ts']!=300 for a,b in zip(rows[i:i+horizon_bars],rows[i+1:i+1+horizon_bars])):
             i+=1
             continue
         baseline=float(base['close'])
