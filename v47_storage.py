@@ -17,7 +17,8 @@ LAST = {'mode': 'not_configured', 'last_saved': None, 'last_restored': None,
         'error': None, 'snapshot_bytes': None, 'warning': '영구 저장소 미연결: 재배포 시 기록 유실 가능'}
 MAX_BYTES = 100 * 1024 * 1024
 LOG = logging.getLogger(__name__)
-LAST.update(consecutive_failures=0, last_attempt=None, worker_alive=False)
+LAST.update(consecutive_failures=0, last_attempt=None, worker_alive=False,
+            worker_started=None, last_completed=None, last_duration_seconds=None)
 
 
 def enabled():
@@ -88,7 +89,7 @@ def save(path):
         LAST.update(mode='not_configured', warning='영구 저장소 미연결: 재배포 시 기록 유실 가능')
         return False
     with LOCK:
-        LAST['last_attempt'] = int(time.time())
+        started = time.monotonic()\n        LAST['last_attempt'] = int(time.time())
         try:
             if not path.exists():
                 raise FileNotFoundError('SQLite database missing')
@@ -121,7 +122,7 @@ def save(path):
 
 
 def run(path, interval=30):
-    LAST['worker_alive'] = True
+    LAST['worker_alive'] = True\n    LAST['worker_started'] = int(time.time())\n    LOG.warning('V47 snapshot worker started (interval=%ss)', interval)
     try:
         while True:
             save(path)
@@ -136,4 +137,4 @@ def status():
     last_saved = LAST.get('last_saved')
     return dict(LAST, configured=enabled(), now=now,
                 snapshot_age_seconds=(now-last_saved if last_saved is not None else None),
-                stale=bool(enabled() and (last_saved is None or now-last_saved > 180)))
+                stale=bool(enabled() and (last_saved is None or now-last_saved > 180)),\n                worker_stalled=bool(enabled() and LAST.get('worker_alive') and\n                    LAST.get('last_attempt') is not None and\n                    (LAST.get('last_completed') is None or\n                     LAST['last_attempt'] > LAST['last_completed']) and\n                    now-LAST['last_attempt'] > 120))
