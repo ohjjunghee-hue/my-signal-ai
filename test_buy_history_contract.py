@@ -12,11 +12,15 @@ class BuyHistoryContract(unittest.TestCase):
     def test_only_buy_events(self):
         self.assertIn("WHERE new_status='BUY'",self.section)
     def test_read_only_query(self):
-        self.assertIn("SELECT market,ts,previous,new_status,price,reason",self.section)
+        self.assertIn("SELECT id,market,ts,previous,new_status,price,reason",self.section)
         for forbidden in ("INSERT INTO","UPDATE setup_events","DELETE FROM","DROP TABLE"):
             self.assertNotIn(forbidden,self.section)
     def test_limit_is_bounded(self):
-        self.assertIn("min(500,int(requested))",self.section)
+        self.assertIn("min(500,int(params.get('limit',['200'])[0]))",self.section)
+    def test_cursor_is_stable(self):
+        self.assertIn("AND id<?",self.section)
+        self.assertIn("next_before_id",self.section)
+        self.assertIn("limit+1",self.section)
     def test_history_not_current_signal(self):
         self.assertIn("과거 BUY 신호 기록",self.section)
 
