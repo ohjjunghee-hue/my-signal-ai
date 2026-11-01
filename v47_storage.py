@@ -136,4 +136,4 @@ def status():
     last_saved = LAST.get('last_saved')
     return dict(LAST, configured=enabled(), now=now,
                 snapshot_age_seconds=(now-last_saved if last_saved is not None else None),
-                stale=bool(enabled() and last_saved is not None and now-last_saved > 180))
+                stale=bool(enabled() and (last_saved is None or now-last_saved > 180)))
