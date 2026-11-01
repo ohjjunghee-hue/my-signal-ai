@@ -7,6 +7,7 @@ import outcome_validation as ov
 import paper_bridge
 import account_readonly
 import v49_gate
+import v49_forward_outcome
 from datetime import datetime, timezone, timedelta
 ROOT=pathlib.Path(__file__).parent
 DATA_DIR=pathlib.Path(os.getenv("DATA_DIR",str(ROOT/"data")))
@@ -883,6 +884,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 'reasons':json.loads(r[4]),'price':r[5]} for r in rows],
                 'note':'BUY 조건 발생 당시 필터 결과 기록. 손익 및 체결 성과가 아님.'},
                 ensure_ascii=False,allow_nan=False).encode();typ='application/json; charset=utf-8'
+        elif path=='/api/forward-validation':
+            # 1-hour observational horizon; pulse samples are retained for only 24h.
+            now_ts=int(time.time())
+            with sqlite3.connect(DB) as con:
+                raw_events=con.execute('SELECT ts,market,allowed,price FROM buy_gate_audit WHERE ts BETWEEN ? AND ? ORDER BY ts DESC LIMIT 1000',
+                    (now_ts-22*3600,now_ts-3600)).fetchall()
+                raw_prices=con.execute('SELECT ts,market,price FROM pulse_samples WHERE ts>=? ORDER BY ts',
+                    (now_ts-22*3600,)).fetchall()
+            events=[{'time':r[0],'market':r[1],'allowed':bool(r[2]),'price':r[3]} for r in raw_events]
+            samples=[{'time':r[0],'market':r[1],'price':r[2]} for r in raw_prices]
+            result=v49_forward_outcome.compare(events,samples,horizon_seconds=3600)
+            result['note']='최근 22시간 내 BUY 후보의 1시간 관찰가격 비교. 체결수익률·검증된 승률 아님.'
+            data=json.dumps(result,ensure_ascii=False,allow_nan=False).encode();typ='application/json; charset=utf-8'
         elif path=='/api/history':
             with sqlite3.connect(DB) as con:
                 rows=con.execute('SELECT ts,market,status,score,entry,stop,reason FROM snapshots ORDER BY id DESC LIMIT 200').fetchall()
