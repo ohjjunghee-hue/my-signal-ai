@@ -27,7 +27,16 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
             recalls[str(threshold)]={'surge_events':comparison['events'],
                                     'early_base_buy_candidates':comparison['detected'],
                                     'recall_pct':comparison['recall_pct']}
-        results[market]={'base_buy_candidates':audit['base_buy_events'],
+        continuity={}
+        for unit in (5,15,60):
+            frame=json.loads((dest/f'{market}_{unit}m.json').read_text())
+            gaps=[b['ts']-a['ts'] for a,b in zip(frame,frame[1:]) if b['ts']-a['ts']!=unit*60]
+            continuity[str(unit)]={'first_ts':frame[0]['ts'] if frame else None,
+                                   'last_ts':frame[-1]['ts'] if frame else None,
+                                   'gap_count':len(gaps),
+                                   'max_gap_seconds':max(gaps) if gaps else 0}
+        results[market]={'candle_continuity':continuity,
+                         'base_buy_candidates':audit['base_buy_events'],
                          'eligible_evaluations':audit['eligible_evaluations'],
                          'insufficient_evaluations':audit['insufficient_evaluations'],
                          'status_counts':audit['status_counts'],
