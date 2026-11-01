@@ -13,6 +13,7 @@ from historical_continuity_diagnostics import coverage_report
 from historical_snapshot_compare import compare_snapshots
 from historical_candle_integrity import validate_candles
 from historical_gap_requery import sampled_gap_timestamps, requery_gap
+from historical_gap_crossframe import cross_timeframe_gap_evidence
 from server import analyze
 
 def classify_recall(comparison, eligible_evaluations, surge_coverage=None):
@@ -54,7 +55,11 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                     # An API failure is inconclusive, never evidence of absence.
                     checked.append({'market':market,'missing_ts':ts,'status':'REQUERY_ERROR',
                                     'error_type':type(exc).__name__,'research_only':True})
-            gap_requery={'requested':len(targets),'results':checked,
+            fifteen=json.loads((dest/f'{market}_15m.json').read_text())
+            crossframe=cross_timeframe_gap_evidence(targets,first,fifteen)
+            (dest/f'{market}_gap_crossframe.json').write_text(
+                json.dumps(crossframe,ensure_ascii=False,indent=2),encoding='utf-8')
+            gap_requery={'crossframe':crossframe,'requested':len(targets),'results':checked,
                          'recovered':sum(x['status']=='RECOVERED_BY_REQUERY' for x in checked),
                          'unresolved':sum(x['status']=='UNRESOLVED_AFTER_REQUERY' for x in checked),
                          'errors':sum(x['status']=='REQUERY_ERROR' for x in checked)}
