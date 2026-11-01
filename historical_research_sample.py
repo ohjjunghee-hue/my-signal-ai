@@ -10,6 +10,7 @@ from historical_candidate_audit import evaluate_market
 from historical_surge_recall import surge_events, compare_candidates
 from historical_trade_outcomes import evaluate_outcomes
 from historical_continuity_diagnostics import coverage_report
+from historical_snapshot_compare import compare_snapshots
 from server import analyze
 
 def classify_recall(comparison, eligible_evaluations):
@@ -31,6 +32,14 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
         for unit in (5,15,60):
             rows=collect(market,unit,count)
             (dest/f'{market}_{unit}m.json').write_text(json.dumps(rows),encoding='utf-8')
+        snapshot_check=None
+        if market in ('KRW-SUI','KRW-APT'):
+            # Compare only overlapping timestamps; do not treat shifted windows as gaps.
+            second=collect(market,5,min(count,1000))
+            first=json.loads((dest/f'{market}_5m.json').read_text())
+            snapshot_check=compare_snapshots(first,second)
+            (dest/f'{market}_snapshot_comparison.json').write_text(
+                json.dumps(snapshot_check,ensure_ascii=False,indent=2),encoding='utf-8')
         audit=evaluate_market(market,dest,analyze,horizon_minutes=180)
         five=json.loads((dest/f'{market}_5m.json').read_text())
         trade_outcomes=evaluate_outcomes(audit['events'],five)
@@ -51,7 +60,8 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                                    'max_gap_seconds':max(gaps) if gaps else 0}
         coverage={str(unit):coverage_report(json.loads((dest/f'{market}_{unit}m.json').read_text()),unit,289 if unit==5 else 35)
                   for unit in (5,15,60)}
-        results[market]={'candle_continuity':continuity,
+        results[market]={'snapshot_comparison':{k:v for k,v in snapshot_check.items() if k!='changed'} if snapshot_check else None,
+                         'candle_continuity':continuity,
                          'continuous_window_coverage':{unit:{k:v for k,v in report.items() if k!='segments'} for unit,report in coverage.items()},
                          'history_evaluation_status':'NOT_EVALUABLE_HISTORY' if audit['eligible_evaluations']==0 else 'PARTIALLY_EVALUABLE',
                          'base_buy_candidates':audit['base_buy_events'],
@@ -85,6 +95,7 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                            'only sampled markets and historical period; not overall recall',
                            'event windows overlap; cooldown is a research assumption',
                            'missing intervals may reflect no-trade candles or API omissions; cause not verified',
+                           'repeat snapshot comparison alone cannot establish why an interval is absent',
                            'recall with no eligible historical evaluations is NOT_EVALUABLE, not 0%']}
     (dest/'research_summary.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps(report,ensure_ascii=False))
