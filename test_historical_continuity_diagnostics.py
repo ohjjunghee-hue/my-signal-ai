@@ -6,6 +6,8 @@ class ContinuityTests(unittest.TestCase):
         rows=[{'ts':t} for t in (0,300,600,1500,1800,3600)]
         r=coverage_report(rows,5,3)
         self.assertEqual(r['segment_count'],3)
+        self.assertEqual(r['observed_span_intervals'],13)
+        self.assertEqual(r['missing_intervals_in_span'],7)
         self.assertEqual(r['longest_segment_bars'],3)
         self.assertEqual(r['eligible_rolling_windows'],1)
         self.assertEqual(r['top_5_segment_lengths'],[3,2,1])
@@ -14,6 +16,8 @@ class ContinuityTests(unittest.TestCase):
         r=coverage_report([],5,289)
         self.assertEqual(r['eligible_rolling_windows'],0)
         self.assertEqual(r['segments'],[])
+        self.assertEqual(r['observed_span_intervals'],0)
+        self.assertEqual(r['missing_intervals_in_span'],0)
         self.assertEqual(r['insufficient_contiguous_bars'],289)
     def test_unsorted_rows_are_sorted_without_filling(self):
         segments=continuous_segments([{'ts':600},{'ts':0},{'ts':300}],5)
