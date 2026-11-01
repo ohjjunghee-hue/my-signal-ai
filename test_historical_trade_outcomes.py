@@ -14,6 +14,8 @@ class TradeOutcomeTests(unittest.TestCase):
         self.assertEqual(r['trades'][0]['net_pct'],-5.2)
         self.assertEqual(r['exit_reason_counts'],{'STOP':1})
         self.assertEqual(r['negative_net_trades'],1)
+        self.assertEqual(r['stop_exits'],1)
+        self.assertEqual(r['tp1_exits'],0)
     def test_gap_stop_uses_open(self):
         r=evaluate_outcomes([event()], [bar(300,o=90,lo=89,hi=110)])
         self.assertEqual(r['trades'][0]['exit_reason'],'STOP_GAP')
@@ -32,6 +34,8 @@ class TradeOutcomeTests(unittest.TestCase):
         self.assertEqual(tp['trades'][0]['net_pct'],9.8)
         self.assertEqual(tp['exit_reason_counts'],{'TP1':1})
         self.assertEqual(tp['positive_net_trades'],1)
+        self.assertEqual(tp['tp1_exits'],1)
+        self.assertEqual(tp['time_exits'],0)
         timed=evaluate_outcomes([event()], [bar(300,close=101),bar(600,close=102)],horizon_minutes=10)
         self.assertEqual(timed['trades'][0]['exit_reason'],'TIME')
         self.assertEqual(timed['trades'][0]['net_pct'],1.8)
