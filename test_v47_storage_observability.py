@@ -12,7 +12,7 @@ class SnapshotObservabilityTests(unittest.TestCase):
     def setUp(self):
         self.original = dict(storage.LAST)
         storage.LAST.update(mode='not_configured', last_saved=None, last_attempt=None,
-                            consecutive_failures=0, worker_alive=False, error=None)
+                            consecutive_failures=0, worker_alive=False, in_progress=False, error=None)
 
     def tearDown(self):
         storage.LAST.clear()
@@ -47,9 +47,11 @@ class SnapshotObservabilityTests(unittest.TestCase):
         with patch.dict(os.environ, {'DATABASE_URL': 'postgres://test'}):
             with patch.object(storage.time, 'time', return_value=1000):
                 storage.LAST.update(worker_alive=True, last_attempt=870,
-                                    last_completed=860)
+                                    last_completed=860, in_progress=True)
                 self.assertTrue(storage.status()['worker_stalled'])
                 storage.LAST['last_completed'] = 870
+                self.assertTrue(storage.status()['worker_stalled'])
+                storage.LAST['in_progress'] = False
                 self.assertFalse(storage.status()['worker_stalled'])
                 storage.LAST['worker_alive'] = False
                 self.assertFalse(storage.status()['worker_stalled'])
@@ -57,6 +59,7 @@ class SnapshotObservabilityTests(unittest.TestCase):
     def test_save_completion_timestamp_on_failure(self):
         with patch.dict(os.environ, {'DATABASE_URL': 'postgres://test'}):
             self.assertFalse(storage.save('/missing/v47/test.db'))
+        self.assertFalse(storage.LAST['in_progress'])
         self.assertIsInstance(storage.LAST['last_completed'], int)
         self.assertGreaterEqual(storage.LAST['last_duration_seconds'], 0)
 
