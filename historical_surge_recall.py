@@ -19,7 +19,8 @@ def surge_window_coverage(bars, *, horizon_bars=36):
             'unresolved_gap_windows':windows-eligible,
             'assessable_pct':round(100*eligible/windows,2) if windows else None,
             'unresolved_gap_pct':round(100*(windows-eligible)/windows,2) if windows else None,
-            'status':('NOT_EVALUABLE_HISTORY' if not eligible else
+            'status':('INSUFFICIENT_HISTORY' if not windows else
+                      'NOT_EVALUABLE_HISTORY' if not eligible else
                       'FULLY_EVALUABLE' if eligible==windows else 'PARTIALLY_EVALUABLE')}
 
 def surge_events(bars, *, threshold_pct, horizon_bars=36, cooldown_bars=36):
