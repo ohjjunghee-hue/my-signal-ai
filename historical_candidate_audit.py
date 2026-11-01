@@ -21,12 +21,15 @@ def evaluate_market(market, data_dir, analyzer, *, horizon_minutes=180):
     gate_fail_counts={}
     eligible_evaluations=0
     insufficient_evaluations=0
+    insufficient_reasons={}
     for i in range(len(five)-1):
         bar=five[i]
         close_ts=bar['ts']+300
         r=historical_base_signal(analyzer,candles[5],candles[15],candles[60],close_ts)
         if r.get('status')=='INSUFFICIENT_HISTORY':
             insufficient_evaluations+=1
+            reason=r.get('reason','unknown')
+            insufficient_reasons[reason]=insufficient_reasons.get(reason,0)+1
             continue
         eligible_evaluations+=1
         status_counts[r['status']]=status_counts.get(r['status'],0)+1
@@ -58,6 +61,7 @@ def evaluate_market(market, data_dir, analyzer, *, horizon_minutes=180):
     return {'market':market,'horizon_minutes':horizon_minutes,
             'base_buy_events':len(events),'eligible_evaluations':eligible_evaluations,
             'insufficient_evaluations':insufficient_evaluations,
+            'insufficient_reasons':insufficient_reasons,
             'status_counts':status_counts,'buy_gate_fail_counts':gate_fail_counts,
             'resolved':len(resolved),
             'unresolved':len(events)-len(resolved),
