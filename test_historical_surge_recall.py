@@ -20,6 +20,7 @@ class RecallTests(unittest.TestCase):
  def test_no_event_is_not_perfect_recall(self):
   self.assertIsNone(compare_candidates([],[])['recall_pct'])
  def test_gap_not_confirmed_event(self):
-  rows=candles(12);rows[5]['ts']+=300;rows[5]['high']=150
+  rows=candles(12);rows[5]['high']=150
+  for x in rows[5:]:x['ts']+=300
   self.assertEqual(surge_events(rows,threshold_pct=10,horizon_bars=10),[])
 if __name__=='__main__':unittest.main()
