@@ -11,6 +11,10 @@ class Tests(unittest.TestCase):
         r=compare([{"time":100,"market":"KRW-A","price":100,"allowed":False}],[],horizon_seconds=10)
         self.assertEqual(r["unresolved"],1)
         self.assertIsNone(r["blocked"]["win_rate_pct"])
+    def test_late_price_is_not_a_valid_one_hour_outcome(self):
+        r=compare([{'time':100,'market':'KRW-A','price':100,'allowed':True}],
+                  [{'time':2000,'market':'KRW-A','price':200}],horizon_seconds=100,max_sample_delay_seconds=10)
+        self.assertEqual(r['unresolved'],1)
     def test_invalid(self):
         with self.assertRaises(ValueError):compare([],[],0)
 if __name__=="__main__":unittest.main()
