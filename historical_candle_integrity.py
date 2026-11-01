@@ -1,6 +1,12 @@
 """Read-only integrity checks for historical exchange candles."""
 import math
 
+def require_valid_candles(rows,unit_minutes):
+    report=validate_candles(rows,unit_minutes)
+    if report['invalid_count']:
+        raise ValueError(f"invalid {unit_minutes}m candles: {report['invalid_count']}")
+    return report
+
 def validate_candles(rows,unit_minutes):
     if unit_minutes<=0:
         raise ValueError('unit_minutes must be positive')
