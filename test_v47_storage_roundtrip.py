@@ -76,6 +76,29 @@ class StorageIntegrationTests(unittest.TestCase):
             storage.restore(self.path)
         self.assertFalse(self.path.exists())
 
+    def test_valid_remote_does_not_replace_existing_local_data(self):
+        self.create_db()
+        with sqlite3.connect(self.path) as db:
+            db.execute("INSERT INTO events(signal) VALUES ('LOCAL_ONLY')")
+        remote = Path(self.tmp.name) / 'remote.db'
+        with sqlite3.connect(remote) as db:
+            db.execute('CREATE TABLE events (id INTEGER PRIMARY KEY, signal TEXT)')
+            db.execute("INSERT INTO events(signal) VALUES ('REMOTE_ONLY')")
+        self.assertTrue(storage.save(remote))
+        self.assertFalse(storage.restore(self.path))
+        with sqlite3.connect(self.path) as db:
+            signals = [row[0] for row in db.execute('SELECT signal FROM events ORDER BY id')]
+        self.assertEqual(signals, ['BUY', 'LOCAL_ONLY'])
+
+    def test_failed_save_does_not_replace_last_good_snapshot(self):
+        self.create_db()
+        self.assertTrue(storage.save(self.path))
+        previous = self.state['row']
+        self.path.unlink()
+        self.assertFalse(storage.save(self.path))
+        self.assertEqual(self.state['row'], previous)
+        self.assertEqual(storage.LAST['consecutive_failures'], 1)
+
     def test_restore_preserves_valid_local_database(self):
         self.create_db()
         self.state['row'] = (b'bad remote bytes', '0'*64, 1)
