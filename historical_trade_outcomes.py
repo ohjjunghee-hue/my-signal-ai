@@ -40,7 +40,15 @@ def evaluate_outcomes(events, candles, *, fee_roundtrip_pct=0.2, horizon_minutes
                         'net_pct':round((exit_price/entry-1)*100-fee_roundtrip_pct,6),
                         'execution_verified':False,'status':'RESOLVED'})
     closed=[r for r in results if r['status']=='RESOLVED']
+    exit_reason_counts={}
+    for trade in closed:
+        reason=trade['exit_reason']
+        exit_reason_counts[reason]=exit_reason_counts.get(reason,0)+1
+    gross_losses=sum(r['net_pct']<0 for r in closed)
+    gross_wins=sum(r['net_pct']>0 for r in closed)
     return {'trades':results,'closed_count':len(closed),
+            'exit_reason_counts':exit_reason_counts,
+            'positive_net_trades':gross_wins,'negative_net_trades':gross_losses,
             'unresolved_count':len(results)-len(closed),
             'mean_net_pct':round(sum(r['net_pct'] for r in closed)/len(closed),6) if closed else None,
             'win_rate_pct':round(100*sum(r['net_pct']>0 for r in closed)/len(closed),2) if closed else None,
