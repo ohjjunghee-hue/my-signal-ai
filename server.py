@@ -476,9 +476,30 @@ def pulse_loop():
 
 def fetch_calendar(market,period):
     if period not in ('days','weeks','months'):raise ValueError('period')
-    rows=get_json('/v1/candles/'+period+'?market='+market+'&count=60')
-    if not isinstance(rows,list) or len(rows)<21:raise ValueError('candles')
-    return [{'c':float(x['trade_price'])} for x in reversed(rows[1:])]
+    rows=get_json('/v1/candles/'+period+'?'+urllib.parse.urlencode({'market':market,'count':60}))
+    if not isinstance(rows,list):raise ValueError('candles')
+    now=time.time()
+    candles=[]
+    for x in rows:
+        try:
+            t=datetime.fromisoformat(x['candle_date_time_utc']+'+00:00').timestamp()
+            p=float(x['trade_price'])
+            if not math.isfinite(p) or p<=0:continue
+            dt=datetime.fromtimestamp(t,timezone.utc)
+            if period=='days':
+                end=t+86400
+            elif period=='weeks':
+                end=t+7*86400
+            else:
+                year=dt.year+(dt.month==12)
+                month=dt.month%12+1
+                end=datetime(year,month,1,tzinfo=timezone.utc).timestamp()
+            if end>now-2:continue
+            candles.append({'c':p,'t':t})
+        except (KeyError,TypeError,ValueError,OverflowError):continue
+    candles=sorted({x['t']:x for x in candles}.values(),key=lambda x:x['t'])
+    if len(candles)<20:raise ValueError('closed candles insufficient')
+    return candles
 
 def four_hour(c60):
     buckets={}
@@ -498,8 +519,8 @@ def analyze_market(ticker, name, source):
             for unit,label in ((1,'1m'),(3,'3m'),(5,'5m'),(10,'10m'),(15,'15m'),(30,'30m'),(60,'1h')):
                 series=c5 if unit==5 else c15 if unit==15 else c60 if unit==60 else fetch_candles(market,unit,45)
                 frames[label]=[{'c':x['c']} for x in series]
-            for name,period in (('day','days'),('week','weeks'),('month','months')):
-                frames[name]=fetch_calendar(market,period)
+            for frame_name,period in (('day','days'),('week','weeks'),('month','months')):
+                frames[frame_name]=fetch_calendar(market,period)
             gate=v49_gate.evaluate(frames)
             short_names=('1m','3m','5m','10m','15m','30m','1h')
             short_metrics={}
@@ -515,8 +536,8 @@ def analyze_market(ticker, name, source):
                 gate['allowed']=False
                 gate['verdict']='AVOID'
                 gate['reasons'].append('30분·1시간봉 모두 20봉 평균 아래')
-        except Exception:
-            gate={'allowed':False,'verdict':'DATA','reasons':['상위 시간대 조회 실패'],'frames':{}}
+        except Exception as exc:
+            gate={'allowed':False,'verdict':'DATA','reasons':['시간대 데이터 검증 실패: '+str(exc)[:90]],'frames':{}}
         gate['timeframes_checked']=sorted(frames) if 'frames' in locals() and gate['verdict']!='DATA' else []
         r['higher_timeframe_gate']=gate
         if not gate['allowed']:
