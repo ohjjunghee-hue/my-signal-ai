@@ -28,7 +28,7 @@ class AdapterTests(unittest.TestCase):
   self.assertTrue(r['reconstructed'])
  def test_missing_five_minute_bar_rejected(self):
   a=mk(310,300);b=mk(120,900);c=mk(120,3600)
-  for x in a[10:]:x['ts']+=300
+  for x in a[100:]:x['ts']+=300
   def fn(*args):raise AssertionError('must not evaluate sparse candles')
   r=historical_base_signal(fn,a,b,c,126000)
   self.assertEqual(r['status'],'INSUFFICIENT_HISTORY')
