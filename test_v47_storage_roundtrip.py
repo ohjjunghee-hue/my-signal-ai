@@ -69,6 +69,13 @@ class StorageIntegrationTests(unittest.TestCase):
             storage.restore(self.path)
         self.assertFalse(self.path.exists())
 
+    def test_snapshot_rejects_corrupt_sqlite_with_matching_checksum(self):
+        payload = b'not a sqlite database'
+        self.state['row'] = (payload, hashlib.sha256(payload).hexdigest(), 1)
+        with self.assertRaises(RuntimeError):
+            storage.restore(self.path)
+        self.assertFalse(self.path.exists())
+
     def test_restore_preserves_valid_local_database(self):
         self.create_db()
         self.state['row'] = (b'bad remote bytes', '0'*64, 1)
