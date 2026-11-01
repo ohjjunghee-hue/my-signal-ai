@@ -134,6 +134,9 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
             'insufficient_evaluations':sum(x['insufficient_evaluations'] for x in results.values()),
             'base_buy_candidates':sum(x['base_buy_candidates'] for x in results.values()),
             'resolved_candidates':sum(x['resolved_candidates'] for x in results.values())}
+    totals['surge_events_by_threshold']={str(t):sum(m['recall'][str(t)]['surge_events'] for m in results.values()) for t in (3,10,50)}
+    totals['evaluable_surge_events_by_threshold']={str(t):sum(m['recall'][str(t)]['surge_events'] for m in results.values() if m['recall'][str(t)]['evaluation_status']!='NOT_EVALUABLE_HISTORY') for t in (3,10,50)}
+    totals['resolved_base_buy_detected_by_threshold']={str(t):sum(m['recall'][str(t)]['resolved_candidate_detected'] for m in results.values() if m['recall'][str(t)]['evaluation_status']!='NOT_EVALUABLE_HISTORY') for t in (3,10,50)}
     report={'research_only':True,'totals':totals,'markets':results,
             'limitations':['base analyze only; V49 gate not reconstructed',
                            'closed-candle proxy 24h return differs from exchange ticker',
