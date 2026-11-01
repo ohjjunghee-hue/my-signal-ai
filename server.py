@@ -852,17 +852,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with sqlite3.connect(DB) as con:rows=read_setup_events(con,100)
             data=json.dumps(rows,ensure_ascii=False).encode();typ='application/json; charset=utf-8'
         elif path=='/api/buy-history':
-            # Read-only historical BUY transitions. Unlike active_setups, events
-            # survive status changes and are never represented as current BUY.
-            requested=urllib.parse.parse_qs(parsed.query).get('limit',['200'])[0]
-            try:limit=max(1,min(500,int(requested)))
+            # Stable cursor pagination on event id; no changes to signal state.
+            params=urllib.parse.parse_qs(parsed.query)
+            try:limit=max(1,min(500,int(params.get('limit',['200'])[0])))
             except (ValueError,TypeError):limit=200
+            try:before_id=int(params.get('before_id',['0'])[0])
+            except (ValueError,TypeError):before_id=0
+            if before_id<0:before_id=0
             with sqlite3.connect(DB) as con:
-                rows=con.execute(
-                    "SELECT market,ts,previous,new_status,price,reason FROM setup_events "
-                    "WHERE new_status='BUY' ORDER BY ts DESC,id DESC LIMIT ?",(limit,)
-                ).fetchall()
-            data=json.dumps({'rows':[dict(zip(('market','ts','previous','new_status','price','reason'),r)) for r in rows],
+                if before_id:
+                    rows=con.execute(
+                        "SELECT id,market,ts,previous,new_status,price,reason FROM setup_events "
+                        "WHERE new_status='BUY' AND id<? ORDER BY id DESC LIMIT ?",(before_id,limit+1)
+                    ).fetchall()
+                else:
+                    rows=con.execute(
+                        "SELECT id,market,ts,previous,new_status,price,reason FROM setup_events "
+                        "WHERE new_status='BUY' ORDER BY id DESC LIMIT ?",(limit+1,)
+                    ).fetchall()
+            has_more=len(rows)>limit
+            rows=rows[:limit]
+            data=json.dumps({'rows':[dict(zip(('id','market','ts','previous','new_status','price','reason'),r)) for r in rows],
+                'next_before_id':rows[-1][0] if has_more and rows else None,
                 'note':'과거 BUY 신호 기록입니다. 현재 매수 상태나 체결 내역을 뜻하지 않습니다.'},
                 ensure_ascii=False,allow_nan=False).encode();typ='application/json; charset=utf-8'
         elif path=='/api/tracked':
