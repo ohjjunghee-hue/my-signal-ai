@@ -121,6 +121,9 @@ def save(path):
             LOG.error('V47 snapshot save failed (consecutive=%d): %s: %s', LAST['consecutive_failures'], type(e).__name__, str(e)[:160])
             LAST.update(mode='error', error=f'{type(e).__name__}: {str(e)[:160]}', warning='원격 저장 실패 · 확인 필요')
             return False
+        finally:
+            LAST['last_completed'] = int(time.time())
+            LAST['last_duration_seconds'] = round(time.monotonic() - started, 3)
 
 
 def run(path, interval=30):
