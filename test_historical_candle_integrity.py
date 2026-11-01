@@ -1,5 +1,5 @@
 import unittest
-from historical_candle_integrity import validate_candles
+from historical_candle_integrity import validate_candles, require_valid_candles
 
 def bar(ts=0,**changes):
     row={'ts':ts,'open':100,'high':105,'low':95,'close':102,'volume':2}
@@ -26,4 +26,9 @@ class CandleIntegrityTests(unittest.TestCase):
     def test_duplicate_flag_is_specific(self):
         r=validate_candles([bar(),bar()],5)
         self.assertIn('duplicate_timestamp',r['invalid'][0]['problems'])
+    def test_invalid_candle_blocks_research(self):
+        with self.assertRaises(ValueError):
+            require_valid_candles([bar(volume=-1)],5)
+    def test_valid_candle_passes_guard(self):
+        self.assertEqual(require_valid_candles([bar()],5)['status'],'VALID')
 if __name__=='__main__':unittest.main()
