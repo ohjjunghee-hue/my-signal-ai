@@ -78,12 +78,17 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
         trade_outcomes=evaluate_outcomes(audit['events'],five)
         (dest/f'{market}_trade_outcomes.json').write_text(json.dumps(trade_outcomes,ensure_ascii=False,indent=2),encoding='utf-8')
         signal_times=[e['signal_close_ts'] for e in audit['events'] if e.get('signal_close_ts')]
+        resolved_signal_times=[e['signal_close_ts'] for e in audit['events'] if e.get('status')=='RESOLVED']
         surge_coverage=surge_window_coverage(five,horizon_bars=36)
         recalls={}
         for threshold in (3,10,50):
             events=surge_events(five,threshold_pct=threshold,horizon_bars=36,cooldown_bars=36)
             comparison=compare_candidates(events,signal_times,lead_minutes=5,lookback_minutes=180)
             recalls[str(threshold)]=classify_recall(comparison,audit['eligible_evaluations'],surge_coverage)
+            verified_comparison=compare_candidates(events,resolved_signal_times,lead_minutes=5,lookback_minutes=180)
+            recalls[str(threshold)]['resolved_candidate_detected']=verified_comparison['detected']
+            recalls[str(threshold)]['resolved_candidate_recall_pct']=(verified_comparison['recall_pct'] if audit['eligible_evaluations'] and surge_coverage['assessable_windows'] else None)
+            recalls[str(threshold)]['resolved_candidate_note']='Historical base BUY with contiguous next-open and full forward horizon only; not live V49 BUY.'
         continuity={}
         for unit in (5,15,60):
             frame=json.loads((dest/f'{market}_{unit}m.json').read_text())
