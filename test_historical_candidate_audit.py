@@ -12,12 +12,12 @@ class AuditTests(unittest.TestCase):
     def test_future_high_uses_next_bar_not_signal_bar(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)
-            f=bars(5,320)
-            f[290]['high']=300
-            for u,series in ((5,f),(15,bars(15,120)),(60,bars(60,120))):
+            f=bars(5,460)
+            f[420]['high']=300
+            for u,series in ((5,f),(15,bars(15,200)),(60,bars(60,120))):
                 (root/f'KRW-TEST_{u}m.json').write_text(json.dumps(series))
             def analyzer(a,b,c,p,change):
-                return {'status':'BUY' if len(a)==120 and a[-1]['t']==289*300 else 'WAIT',
+                return {'status':'BUY' if len(a)==120 and a[-1]['t']==419*300 else 'WAIT',
                         'entry':p,'stop':90,'targets':[110]}
             result=evaluate_market('KRW-TEST',root,analyzer,horizon_minutes=10)
             self.assertEqual(result['resolved'],1)
