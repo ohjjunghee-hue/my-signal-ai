@@ -48,7 +48,11 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                          'recall':recalls,
                          'candle_counts':{str(unit):len(json.loads((dest/f'{market}_{unit}m.json').read_text())) for unit in (5,15,60)}}
         (dest/f'{market}_candidate_audit.json').write_text(json.dumps(audit,ensure_ascii=False,indent=2),encoding='utf-8')
-    report={'research_only':True,'markets':results,
+    totals={'eligible_evaluations':sum(x['eligible_evaluations'] for x in results.values()),
+            'insufficient_evaluations':sum(x['insufficient_evaluations'] for x in results.values()),
+            'base_buy_candidates':sum(x['base_buy_candidates'] for x in results.values()),
+            'resolved_candidates':sum(x['resolved_candidates'] for x in results.values())}
+    report={'research_only':True,'totals':totals,'markets':results,
             'limitations':['base analyze only; V49 gate not reconstructed',
                            'closed-candle proxy 24h return differs from exchange ticker',
                            'max future high is not executable profit',
