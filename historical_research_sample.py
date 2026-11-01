@@ -84,6 +84,7 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                            'trade outcomes are simulated with assumed 0.2% costs; no slippage/spread or real fills',
                            'only sampled markets and historical period; not overall recall',
                            'event windows overlap; cooldown is a research assumption',
+                           'missing intervals may reflect no-trade candles or API omissions; cause not verified',
                            'recall with no eligible historical evaluations is NOT_EVALUABLE, not 0%']}
     (dest/'research_summary.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps(report,ensure_ascii=False))
