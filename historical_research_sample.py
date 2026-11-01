@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from historical_bithumb_collect import collect
 from historical_candidate_audit import evaluate_market
-from historical_surge_recall import surge_events, compare_candidates
+from historical_surge_recall import surge_events, compare_candidates, surge_window_coverage
 from historical_trade_outcomes import evaluate_outcomes
 from historical_continuity_diagnostics import coverage_report
 from historical_snapshot_compare import compare_snapshots
@@ -52,6 +52,7 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
         trade_outcomes=evaluate_outcomes(audit['events'],five)
         (dest/f'{market}_trade_outcomes.json').write_text(json.dumps(trade_outcomes,ensure_ascii=False,indent=2),encoding='utf-8')
         signal_times=[e['signal_close_ts'] for e in audit['events'] if e.get('signal_close_ts')]
+        surge_coverage=surge_window_coverage(five,horizon_bars=36)
         recalls={}
         for threshold in (3,10,50):
             events=surge_events(five,threshold_pct=threshold,horizon_bars=36,cooldown_bars=36)
@@ -67,7 +68,8 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                                    'max_gap_seconds':max(gaps) if gaps else 0}
         coverage={str(unit):coverage_report(json.loads((dest/f'{market}_{unit}m.json').read_text()),unit,289 if unit==5 else 35)
                   for unit in (5,15,60)}
-        results[market]={'candle_integrity':{unit:{k:v for k,v in check.items() if k!='invalid'} for unit,check in integrity.items()},
+        results[market]={'surge_window_coverage':surge_coverage,
+                         'candle_integrity':{unit:{k:v for k,v in check.items() if k!='invalid'} for unit,check in integrity.items()},
                          'snapshot_comparison':{k:v for k,v in snapshot_check.items() if k!='changed'} if snapshot_check else None,
                          'candle_continuity':continuity,
                          'continuous_window_coverage':{unit:{k:v for k,v in report.items() if k!='segments'} for unit,report in coverage.items()},
