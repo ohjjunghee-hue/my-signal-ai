@@ -45,10 +45,14 @@ def evaluate_outcomes(events, candles, *, fee_roundtrip_pct=0.2, horizon_minutes
         reason=trade['exit_reason']
         exit_reason_counts[reason]=exit_reason_counts.get(reason,0)+1
     gross_losses=sum(r['net_pct']<0 for r in closed)
+    stop_exits=sum(exit_reason_counts.get(k,0) for k in ('STOP','STOP_GAP'))
+    tp1_exits=sum(exit_reason_counts.get(k,0) for k in ('TP1','TP1_GAP'))
+    time_exits=exit_reason_counts.get('TIME',0)
     gross_wins=sum(r['net_pct']>0 for r in closed)
     return {'trades':results,'closed_count':len(closed),
             'exit_reason_counts':exit_reason_counts,
             'positive_net_trades':gross_wins,'negative_net_trades':gross_losses,
+            'stop_exits':stop_exits,'tp1_exits':tp1_exits,'time_exits':time_exits,
             'unresolved_count':len(results)-len(closed),
             'mean_net_pct':round(sum(r['net_pct'] for r in closed)/len(closed),6) if closed else None,
             'win_rate_pct':round(100*sum(r['net_pct']>0 for r in closed)/len(closed),2) if closed else None,
