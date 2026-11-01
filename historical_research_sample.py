@@ -10,7 +10,7 @@ from historical_candidate_audit import evaluate_market
 from historical_surge_recall import surge_events, compare_candidates
 from server import analyze
 
-def run(markets=('KRW-BTC','KRW-ETH'),count=600,out_dir='historical_data'):
+def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,out_dir='historical_data'):
     dest=Path(out_dir);dest.mkdir(parents=True,exist_ok=True)
     results={}
     for market in markets:
