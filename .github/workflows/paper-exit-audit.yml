@@ -8,6 +8,7 @@ on:
       - 'test_backup_offline_verify.py'
       - 'test_backup_producer_integration.py'
       - 'test_backup_concurrent_writes.py'
+      - 'test_backup_restore_drill.py'
       - '.github/workflows/paper-exit-audit.yml'
   workflow_dispatch:
 jobs:
@@ -19,4 +20,4 @@ jobs:
         with:
           python-version: '3.11'
       - name: Test sampled exit audit
-        run: python -m unittest -v test_paper_exit_audit_readonly test_backup_offline_verify test_backup_producer_integration test_backup_concurrent_writes
+        run: python -m unittest -v test_paper_exit_audit_readonly test_backup_offline_verify test_backup_producer_integration test_backup_concurrent_writes test_backup_restore_drill
