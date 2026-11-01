@@ -9,7 +9,7 @@ import pathlib
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 API='https://api.bithumb.com/v1/candles/minutes/'
 
@@ -40,10 +40,13 @@ def collect(market, unit, count=200, *, opener=None, pause=0.15):
                  'volume':float(x['candle_acc_trade_volume'])}
             if ts+unit*60<=time.time():result[ts]=bar
         if oldest is None:break
-        next_before=datetime.fromtimestamp(oldest,timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        # Bithumb's `to` parameter is interpreted in KST even though
+        # response candle_date_time_utc is UTC. Convert cursor explicitly.
+        next_before=datetime.fromtimestamp(oldest,timezone(timedelta(hours=9))).strftime('%Y-%m-%dT%H:%M:%S')
         if before==next_before:break
         before=next_before
-        if len(payload)<params['count']:break
+        # Short pages can be valid when historical intervals have no trades.
+        # Continue pagination until no progress or the API returns no bars.
         time.sleep(pause)
     rows=sorted(result.values(),key=lambda x:x['ts'])[-count:]
     # Fail closed on unexpected API pagination holes rather than silently
