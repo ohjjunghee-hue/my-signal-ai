@@ -14,4 +14,4 @@ jobs:
         with:
           python-version: '3.12'
       - name: Run isolated storage regression tests
-        run: python -m unittest test_v47_storage_observability -v
+        run: python -m unittest test_v47_storage_observability test_v47_storage_roundtrip -v
