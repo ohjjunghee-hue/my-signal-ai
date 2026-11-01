@@ -25,6 +25,22 @@ class CollectorTests(unittest.TestCase):
         with patch('historical_bithumb_collect.time.time',return_value=1000):
             result=collect('KRW-BTC',5,2,opener=opener,pause=0)
         self.assertEqual(len(result),1)
+    def test_utc_pagination_and_gap_rejection(self):
+        calls=[]
+        def opener(req,timeout):
+            calls.append(req.full_url)
+            if len(calls)==1:
+                return Response(json.dumps([row(900),row(600)]).encode())
+            return Response(json.dumps([row(300),row(0)]).encode())
+        with patch('historical_bithumb_collect.time.time',return_value=2000):
+            result=collect('KRW-BTC',5,4,opener=opener,pause=0)
+        self.assertEqual([x['ts'] for x in result],[0,300,600,900])
+        self.assertIn('Z',calls[1])
+        def gapped(req,timeout):
+            return Response(json.dumps([row(900),row(0)]).encode())
+        with patch('historical_bithumb_collect.time.time',return_value=2000):
+            with self.assertRaisesRegex(ValueError,'noncontiguous'):
+                collect('KRW-BTC',5,2,opener=gapped,pause=0)
     def test_rejects_invalid_requests(self):
         with self.assertRaises(ValueError):collect('BTC-KRW',5)
         with self.assertRaises(ValueError):collect('KRW-BTC',1)
