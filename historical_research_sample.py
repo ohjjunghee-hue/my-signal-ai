@@ -12,6 +12,7 @@ from historical_trade_outcomes import evaluate_outcomes
 from historical_continuity_diagnostics import coverage_report
 from historical_snapshot_compare import compare_snapshots
 from historical_candle_integrity import validate_candles
+from historical_gap_requery import gap_timestamps, requery_gap
 from server import analyze
 
 def classify_recall(comparison, eligible_evaluations, surge_coverage=None):
@@ -41,6 +42,24 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
             snapshot_check=compare_snapshots(first,second)
             (dest/f'{market}_snapshot_comparison.json').write_text(
                 json.dumps(snapshot_check,ensure_ascii=False,indent=2),encoding='utf-8')
+        gap_requery=None
+        if market in ('KRW-SUI','KRW-APT'):
+            first=json.loads((dest/f'{market}_5m.json').read_text())
+            targets=gap_timestamps(first,unit=5,limit=3)
+            checked=[]
+            for ts in targets:
+                try:
+                    checked.append(requery_gap(market,ts,unit=5))
+                except Exception as exc:
+                    # An API failure is inconclusive, never evidence of absence.
+                    checked.append({'market':market,'missing_ts':ts,'status':'REQUERY_ERROR',
+                                    'error_type':type(exc).__name__,'research_only':True})
+            gap_requery={'requested':len(targets),'results':checked,
+                         'recovered':sum(x['status']=='RECOVERED_BY_REQUERY' for x in checked),
+                         'unresolved':sum(x['status']=='UNRESOLVED_AFTER_REQUERY' for x in checked),
+                         'errors':sum(x['status']=='REQUERY_ERROR' for x in checked)}
+            (dest/f'{market}_gap_requery.json').write_text(
+                json.dumps(gap_requery,ensure_ascii=False,indent=2),encoding='utf-8')
         integrity={str(unit):validate_candles(json.loads((dest/f'{market}_{unit}m.json').read_text()),unit)
                    for unit in (5,15,60)}
         (dest/f'{market}_candle_integrity.json').write_text(json.dumps(integrity,ensure_ascii=False,indent=2),encoding='utf-8')
@@ -68,7 +87,8 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                                    'max_gap_seconds':max(gaps) if gaps else 0}
         coverage={str(unit):coverage_report(json.loads((dest/f'{market}_{unit}m.json').read_text()),unit,289 if unit==5 else 35)
                   for unit in (5,15,60)}
-        results[market]={'surge_window_coverage':surge_coverage,
+        results[market]={'gap_requery':gap_requery,
+                         'surge_window_coverage':surge_coverage,
                          'candle_integrity':{unit:{k:v for k,v in check.items() if k!='invalid'} for unit,check in integrity.items()},
                          'snapshot_comparison':{k:v for k,v in snapshot_check.items() if k!='changed'} if snapshot_check else None,
                          'candle_continuity':continuity,
