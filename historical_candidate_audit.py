@@ -58,12 +58,16 @@ def evaluate_market(market, data_dir, analyzer, *, horizon_minutes=180):
                        'reached_50pct':max_gain_pct>=50,'status':'RESOLVED',
                        'reconstructed':True,'final_live_buy_verified':False})
     resolved=[e for e in events if e['status']=='RESOLVED']
+    gains=[e['max_future_high_pct'] for e in resolved]
     return {'market':market,'horizon_minutes':horizon_minutes,
             'base_buy_events':len(events),'eligible_evaluations':eligible_evaluations,
             'insufficient_evaluations':insufficient_evaluations,
             'insufficient_reasons':insufficient_reasons,
             'status_counts':status_counts,'buy_gate_fail_counts':gate_fail_counts,
             'resolved':len(resolved),
+            'max_future_high_pct_summary':{'min':min(gains) if gains else None,
+                                           'mean':round(sum(gains)/len(gains),6) if gains else None,
+                                           'max':max(gains) if gains else None},
             'unresolved':len(events)-len(resolved),
             'hit_counts':{str(k):sum(e[f'reached_{k}pct'] for e in resolved) for k in (3,10,50)},
             'events':events,'disclaimer':'Base BUY reconstruction only; not actual BUY logs, not fills, not full live V49 gate.'}
