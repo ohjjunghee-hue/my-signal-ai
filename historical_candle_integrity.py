@@ -6,11 +6,15 @@ def validate_candles(rows,unit_minutes):
         raise ValueError('unit_minutes must be positive')
     invalid=[]
     previous=None
-    for row in sorted(rows,key=lambda x:x['ts']):
+    seen=set()
+    for row in rows:
         ts=row['ts']
         problems=[]
-        if previous is not None and ts<=previous:
-            problems.append('duplicate_or_out_of_order_timestamp')
+        if ts in seen:
+            problems.append('duplicate_timestamp')
+        elif previous is not None and ts<previous:
+            problems.append('out_of_order_timestamp')
+        seen.add(ts)
         previous=ts
         if ts%(unit_minutes*60):
             problems.append('misaligned_timestamp')
