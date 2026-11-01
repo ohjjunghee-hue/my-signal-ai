@@ -4,6 +4,7 @@ Requires DATABASE_URL pointing to a user-owned PostgreSQL database.
 The snapshot is not a substitute for a continuously running worker.
 """
 import hashlib
+from contextlib import closing
 import logging
 import os
 import pathlib
@@ -55,7 +56,7 @@ def restore(path):
             # Protect existing local data if a restart reuses the filesystem.
             if path.exists() and path.stat().st_size > 0:
                 try:
-                    with sqlite3.connect(path) as db:
+                    with closing(sqlite3.connect(path)) as db:
                         existing = db.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
                     if existing:
                         LAST.update(mode='local_preserved', error=None, warning='기존 로컬 DB 보존 · 원격 덮어쓰기 생략')
@@ -68,7 +69,7 @@ def restore(path):
                 with os.fdopen(fd, 'wb') as f:
                     f.write(payload)
                     f.flush(); os.fsync(f.fileno())
-                with sqlite3.connect(tmp) as db:
+                with closing(sqlite3.connect(tmp)) as db:
                     if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
                         raise ValueError('복원 DB 무결성 오류')
                 os.replace(tmp, path)
@@ -97,7 +98,7 @@ def save(path):
             fd, tmp = tempfile.mkstemp(prefix='.v47-backup-', suffix='.db')
             os.close(fd)
             try:
-                with sqlite3.connect(path, timeout=20) as source, sqlite3.connect(tmp) as dest:
+                with closing(sqlite3.connect(path, timeout=20)) as source, closing(sqlite3.connect(tmp)) as dest:
                     source.backup(dest)
                 with open(tmp, 'rb') as f: payload = f.read(MAX_BYTES + 1)
             finally:
