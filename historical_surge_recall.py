@@ -3,6 +3,22 @@
 Research only. Surge events are derived from future OHLCV and are NEVER
 provided to the signal algorithm. Results do not imply live fills.
 """
+def surge_window_coverage(bars, *, horizon_bars=36):
+    """Count assessable 5m forward windows separately from unresolved gaps."""
+    if horizon_bars<1:
+        raise ValueError('positive horizon required')
+    rows=sorted(bars,key=lambda x:x['ts'])
+    if len({r['ts'] for r in rows})!=len(rows):
+        raise ValueError('duplicate timestamps')
+    windows=max(0,len(rows)-horizon_bars)
+    eligible=0
+    for i in range(windows):
+        if all(b['ts']-a['ts']==300 for a,b in zip(rows[i:i+horizon_bars],rows[i+1:i+1+horizon_bars])):
+            eligible+=1
+    return {'possible_windows':windows,'assessable_windows':eligible,
+            'unresolved_gap_windows':windows-eligible,
+            'status':'NOT_EVALUABLE_HISTORY' if not eligible else 'PARTIALLY_EVALUABLE'}
+
 def surge_events(bars, *, threshold_pct, horizon_bars=36, cooldown_bars=36):
     if threshold_pct<=0 or horizon_bars<1 or cooldown_bars<1:
         raise ValueError('positive parameters required')
