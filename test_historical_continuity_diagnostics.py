@@ -8,10 +8,13 @@ class ContinuityTests(unittest.TestCase):
         self.assertEqual(r['segment_count'],3)
         self.assertEqual(r['longest_segment_bars'],3)
         self.assertEqual(r['eligible_rolling_windows'],1)
+        self.assertEqual(r['top_5_segment_lengths'],[3,2,1])
+        self.assertEqual(r['insufficient_contiguous_bars'],0)
     def test_empty_history_has_no_eligible_windows(self):
         r=coverage_report([],5,289)
         self.assertEqual(r['eligible_rolling_windows'],0)
         self.assertEqual(r['segments'],[])
+        self.assertEqual(r['insufficient_contiguous_bars'],289)
     def test_unsorted_rows_are_sorted_without_filling(self):
         segments=continuous_segments([{'ts':600},{'ts':0},{'ts':300}],5)
         self.assertEqual(segments[0]['bars'],3)
