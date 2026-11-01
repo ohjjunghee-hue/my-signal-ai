@@ -3,7 +3,7 @@ import json
 import unittest
 from datetime import datetime,timezone
 from urllib.parse import parse_qs,urlparse
-from historical_gap_requery import gap_timestamps,requery_gap
+from historical_gap_requery import gap_timestamps,sampled_gap_timestamps,requery_gap
 
 class Response(io.BytesIO):
     def __enter__(self):return self
@@ -18,6 +18,11 @@ def opener_for(ts,seen):
 class GapRequeryTests(unittest.TestCase):
     def test_gap_enumeration_limit(self):
         self.assertEqual(gap_timestamps([{'ts':0},{'ts':1200}],limit=2),[300,600])
+    def test_distributed_missing_interval_sample(self):
+        rows=[{'ts':t} for t in (0,900,1200,2400,2700,3900)]
+        self.assertEqual(sampled_gap_timestamps(rows,limit=3),[300,1500,3000])
+    def test_no_gaps_returns_empty(self):
+        self.assertEqual(sampled_gap_timestamps([{'ts':0},{'ts':300}],limit=3),[])
     def test_exact_timestamp_recovered(self):
         seen=[]
         r=requery_gap('KRW-SUI',300,opener=opener_for([300,0],seen))
