@@ -8,6 +8,7 @@ import paper_bridge
 import account_readonly
 import v49_gate
 import v49_forward_outcome
+import v49_secure_backup
 from datetime import datetime, timezone, timedelta
 ROOT=pathlib.Path(__file__).parent
 DATA_DIR=pathlib.Path(os.getenv("DATA_DIR",str(ROOT/"data")))
@@ -811,6 +812,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_header('Set-Cookie','ms_token='+ACCESS_TOKEN+'; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000'+('; Secure' if self.headers.get('X-Forwarded-Proto')=='https' else ''))
                 self.end_headers()
                 return
+        if path=='/api/backup':
+            # Fail closed: no downloadable DB if access control is not configured.
+            if not ACCESS_TOKEN:
+                self.send_error(403,'Configure ACCESS_TOKEN before downloading backups')
+                return
+            try:
+                data=v49_secure_backup.make_backup(DB)
+            except Exception:
+                self.send_error(503,'Backup failed')
+                return
+            self.send_response(200)
+            self.send_header('Content-Type','application/zip')
+            self.send_header('Content-Disposition','attachment; filename="my-signal-db-backup.zip"')
+            self.send_header('Cache-Control','no-store')
+            self.send_header('X-Content-Type-Options','nosniff')
+            self.send_header('Content-Length',str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path=='/health':
             data=json.dumps({'ok':True,'engine':state['engine_version'],'last_scan':state['last_scan'],'scan_age_seconds':round(time.time()-state['last_scan']) if state['last_scan'] else None,'buy_gate':'11-frame-on-technical-BUY','real_money_ready':False}).encode();typ='application/json; charset=utf-8'
         elif path=='/api/status':
