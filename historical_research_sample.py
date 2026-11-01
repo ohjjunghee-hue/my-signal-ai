@@ -11,6 +11,7 @@ from historical_surge_recall import surge_events, compare_candidates
 from historical_trade_outcomes import evaluate_outcomes
 from historical_continuity_diagnostics import coverage_report
 from historical_snapshot_compare import compare_snapshots
+from historical_candle_integrity import validate_candles
 from server import analyze
 
 def classify_recall(comparison, eligible_evaluations):
@@ -40,6 +41,9 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
             snapshot_check=compare_snapshots(first,second)
             (dest/f'{market}_snapshot_comparison.json').write_text(
                 json.dumps(snapshot_check,ensure_ascii=False,indent=2),encoding='utf-8')
+        integrity={str(unit):validate_candles(json.loads((dest/f'{market}_{unit}m.json').read_text()),unit)
+                   for unit in (5,15,60)}
+        (dest/f'{market}_candle_integrity.json').write_text(json.dumps(integrity,ensure_ascii=False,indent=2),encoding='utf-8')
         audit=evaluate_market(market,dest,analyze,horizon_minutes=180)
         five=json.loads((dest/f'{market}_5m.json').read_text())
         trade_outcomes=evaluate_outcomes(audit['events'],five)
@@ -60,7 +64,8 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                                    'max_gap_seconds':max(gaps) if gaps else 0}
         coverage={str(unit):coverage_report(json.loads((dest/f'{market}_{unit}m.json').read_text()),unit,289 if unit==5 else 35)
                   for unit in (5,15,60)}
-        results[market]={'snapshot_comparison':{k:v for k,v in snapshot_check.items() if k!='changed'} if snapshot_check else None,
+        results[market]={'candle_integrity':{unit:{k:v for k,v in check.items() if k!='invalid'} for unit,check in integrity.items()},
+                         'snapshot_comparison':{k:v for k,v in snapshot_check.items() if k!='changed'} if snapshot_check else None,
                          'candle_continuity':continuity,
                          'continuous_window_coverage':{unit:{k:v for k,v in report.items() if k!='segments'} for unit,report in coverage.items()},
                          'history_evaluation_status':'NOT_EVALUABLE_HISTORY' if audit['eligible_evaluations']==0 else 'PARTIALLY_EVALUABLE',
