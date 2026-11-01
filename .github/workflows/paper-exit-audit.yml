@@ -11,6 +11,8 @@ on:
       - 'test_backup_restore_drill.py'
       - 'test_buy_history_contract.py'
       - 'server.py'
+      - 'index.html'
+      - 'test_buy_history_ui.py'
       - '.github/workflows/paper-exit-audit.yml'
   workflow_dispatch:
 jobs:
@@ -22,4 +24,4 @@ jobs:
         with:
           python-version: '3.11'
       - name: Test sampled exit audit
-        run: python -m unittest -v test_paper_exit_audit_readonly test_backup_offline_verify test_backup_producer_integration test_backup_concurrent_writes test_backup_restore_drill test_buy_history_contract
+        run: python -m unittest -v test_paper_exit_audit_readonly test_backup_offline_verify test_backup_producer_integration test_backup_concurrent_writes test_backup_restore_drill test_buy_history_contract test_buy_history_ui
