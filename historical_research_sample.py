@@ -12,7 +12,7 @@ from historical_trade_outcomes import evaluate_outcomes
 from historical_continuity_diagnostics import coverage_report
 from historical_snapshot_compare import compare_snapshots
 from historical_candle_integrity import validate_candles
-from historical_gap_requery import gap_timestamps, requery_gap
+from historical_gap_requery import sampled_gap_timestamps, requery_gap
 from server import analyze
 
 def classify_recall(comparison, eligible_evaluations, surge_coverage=None):
@@ -45,7 +45,7 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
         gap_requery=None
         if market in ('KRW-SUI','KRW-APT'):
             first=json.loads((dest/f'{market}_5m.json').read_text())
-            targets=gap_timestamps(first,unit=5,limit=3)
+            targets=sampled_gap_timestamps(first,unit=5,limit=3)
             checked=[]
             for ts in targets:
                 try:
