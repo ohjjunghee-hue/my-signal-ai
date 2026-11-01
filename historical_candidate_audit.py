@@ -50,10 +50,18 @@ def evaluate_market(market, data_dir, analyzer, *, horizon_minutes=180):
         if any(b['ts']-a['ts']!=300 for a,b in zip(window,window[1:])):
             events.append({'signal_close_ts':close_ts,'status':'UNRESOLVED_GAP'})
             continue
+        stop=r.get('stop')
+        targets=r.get('targets') or []
+        # Missing or invalid risk levels remain unverified, never synthesized.
+        valid_risk=(stop is not None and targets and
+                    0<float(stop)<entry<float(targets[0]))
         max_high=max(float(x['high']) for x in window)
         max_gain_pct=round((max_high/entry-1)*100,6)
         events.append({'signal_close_ts':close_ts,'entry_ts':next_bar['ts'],
                        'entry_reference':entry,'max_future_high_pct':max_gain_pct,
+                       'stop_reference':float(stop) if valid_risk else None,
+                       'tp1_reference':float(targets[0]) if valid_risk else None,
+                       'risk_levels_valid':bool(valid_risk),
                        'reached_3pct':max_gain_pct>=3,'reached_10pct':max_gain_pct>=10,
                        'reached_50pct':max_gain_pct>=50,'status':'RESOLVED',
                        'reconstructed':True,'final_live_buy_verified':False})
