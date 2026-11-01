@@ -16,14 +16,16 @@ def historical_base_signal(server_analyze, bars5, bars15, bars60, close_ts):
     f15=to_server_candles(bars15,close_ts)
     f60=to_server_candles(bars60,close_ts)
     if min(map(len,(f5,f15,f60)))<35 or len(f5)<289:
-        return {'status':'INSUFFICIENT_HISTORY','reconstructed':True}
+        return {'status':'INSUFFICIENT_HISTORY','reconstructed':True,
+                'reason':'minimum history not reached',
+                'available_counts':{'5':len(f5),'15':len(f15),'60':len(f60)}}
     # Exchange candle APIs can omit no-trade periods; do not label 289 sparse
     # observations as a continuous 24-hour window.
     for series, duration, required in ((f5,300,289),(f15,900,35),(f60,3600,35)):
         tail=series[-required:]
         if any(b['t']-a['t']!=duration for a,b in zip(tail,tail[1:])):
             return {'status':'INSUFFICIENT_HISTORY','reconstructed':True,
-                    'reason':'missing candles in required lookback window'}
+                    'reason':f'missing {duration//60}m candles in required lookback window'}
     # 288 complete 5m intervals = 24 hours; never current ticker.
     price=f5[-1]['c']
     baseline=f5[-289]['c']
