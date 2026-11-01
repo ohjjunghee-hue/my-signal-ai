@@ -45,6 +45,8 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                          'resolved_candidates':audit['resolved'],
                          'unique_entry_times':audit['unique_entry_times'],
                          'repeated_entry_signals':audit['repeated_entry_signals'],
+                         'candidate_episodes':audit['candidate_episodes'],
+                         'signals_within_existing_episode':audit['signals_within_existing_episode'],
                          'max_future_high_pct_summary':audit['max_future_high_pct_summary'],
                          'unresolved_candidates':audit['unresolved'],
                          'hit_counts':audit['hit_counts'],
