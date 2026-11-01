@@ -21,6 +21,8 @@ on:
       - 'test_historical_bithumb_collect.py'
       - 'historical_candidate_audit.py'
       - 'test_historical_candidate_audit.py'
+      - 'historical_surge_recall.py'
+      - 'test_historical_surge_recall.py'
       - '.github/workflows/paper-exit-audit.yml'
   workflow_dispatch:
 jobs:
@@ -32,4 +34,4 @@ jobs:
         with:
           python-version: '3.11'
       - name: Test sampled exit audit
-        run: python -m unittest -v test_paper_exit_audit_readonly test_backup_offline_verify test_backup_producer_integration test_backup_concurrent_writes test_backup_restore_drill test_buy_history_contract test_buy_history_ui test_historical_replay_readonly test_historical_buy_adapter test_historical_bithumb_collect test_historical_candidate_audit
+        run: python -m unittest -v test_paper_exit_audit_readonly test_backup_offline_verify test_backup_producer_integration test_backup_concurrent_writes test_backup_restore_drill test_buy_history_contract test_buy_history_ui test_historical_replay_readonly test_historical_buy_adapter test_historical_bithumb_collect test_historical_candidate_audit test_historical_surge_recall
