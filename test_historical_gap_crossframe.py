@@ -11,6 +11,9 @@ class CrossframeTests(unittest.TestCase):
         self.assertFalse(x['proof_of_missing_cause'])
     def test_absent_15m_is_unresolved(self):
         r=cross_timeframe_gap_evidence([300],[{'ts':0}],[])
+        self.assertEqual(r['results'][0]['status'],'OUTSIDE_15M_HISTORY')
+    def test_missing_15m_inside_collection_range(self):
+        r=cross_timeframe_gap_evidence([1200],[{'ts':900}],[{'ts':0,'volume':5},{'ts':1800,'volume':7}])
         self.assertEqual(r['results'][0]['status'],'NO_15M_AGGREGATE')
     def test_unaligned_rejected(self):
         with self.assertRaises(ValueError):
