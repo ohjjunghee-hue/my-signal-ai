@@ -15,8 +15,9 @@ class V49CalendarTests(unittest.TestCase):
         now=datetime(2026,11,15,tzinfo=timezone.utc)
         rows=[]
         for i in range(25):
-            year=2026-(11-i-1)//12
-            month=(11-i-1)%12+1
+            index=2026*12+10-i
+            year=index//12
+            month=index%12+1
             rows.append({'candle_date_time_utc':f'{year:04d}-{month:02d}-01T00:00:00','trade_price':'100'})
         with patch.object(server,'get_json',return_value=rows),patch.object(server.time,'time',return_value=now.timestamp()):
             result=server.fetch_calendar('KRW-TEST','months')
