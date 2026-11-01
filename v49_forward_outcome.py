@@ -1,8 +1,8 @@
 """Forward-only BUY gate outcome comparison; no invented fills or intrabar extremes."""
 import math
 
-def compare(events, prices, horizon_seconds=86400, fee_bps=10, slippage_bps=10):
-    if horizon_seconds<=0 or min(fee_bps,slippage_bps)<0:raise ValueError("invalid parameters")
+def compare(events, prices, horizon_seconds=86400, fee_bps=10, slippage_bps=10, max_sample_delay_seconds=900):
+    if horizon_seconds<=0 or max_sample_delay_seconds<0 or min(fee_bps,slippage_bps)<0:raise ValueError("invalid parameters")
     cost=2*(fee_bps+slippage_bps)/100
     by_market={}
     for p in prices:
@@ -19,7 +19,7 @@ def compare(events, prices, horizon_seconds=86400, fee_bps=10, slippage_bps=10):
             if not math.isfinite(entry) or entry<=0:continue
             target=ts+horizon_seconds
             # A sample must be observed at or after the full holding horizon.
-            future=next((p for t,p in by_market.get(str(e["market"]),[]) if t>=target),None)
+            future=next((p for t,p in by_market.get(str(e["market"]),[]) if target<=t<=target+max_sample_delay_seconds),None)
             if future is None:unresolved+=1;continue
             groups[allowed].append(100*(future/entry-1)-cost)
         except (KeyError,ValueError,TypeError):continue
