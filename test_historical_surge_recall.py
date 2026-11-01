@@ -37,4 +37,9 @@ class RecallTests(unittest.TestCase):
   self.assertEqual(r['unresolved_gap_windows'],2)
   self.assertEqual(r['unresolved_gap_pct'],100.0)
   self.assertEqual(r['status'],'NOT_EVALUABLE_HISTORY')
+ def test_too_short_history_has_distinct_status(self):
+  r=surge_window_coverage(candles(10),horizon_bars=10)
+  self.assertEqual(r['possible_windows'],0)
+  self.assertIsNone(r['assessable_pct'])
+  self.assertEqual(r['status'],'INSUFFICIENT_HISTORY')
 if __name__=='__main__':unittest.main()
