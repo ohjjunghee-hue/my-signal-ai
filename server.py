@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 import outcome_validation as ov
 import paper_bridge
+import account_readonly
 from datetime import datetime, timezone, timedelta
 ROOT=pathlib.Path(__file__).parent
 DATA_DIR=pathlib.Path(os.getenv("DATA_DIR",str(ROOT/"data")))
@@ -765,6 +766,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with sqlite3.connect(DB) as con:
                 rows=get_audit_rows(con)
             data=json.dumps({'rows':rows,'note':'첫 관찰 시점 기준. 과거 데이터가 없는 기존 기록은 검증 불가. 가격 샘플 사이 고저점 누락 가능.'},ensure_ascii=False).encode();typ='application/json; charset=utf-8'
+        elif path=='/api/account':
+            # Private financial data MUST fail closed if dashboard auth is not enabled.
+            if not ACCESS_TOKEN:
+                self.send_response(503)
+                self.send_header('Content-Type','application/json; charset=utf-8')
+                self.send_header('Cache-Control','no-store')
+                self.end_headers()
+                self.wfile.write(b'{"error":"Account API disabled until ACCESS_TOKEN is configured"}')
+                return
+            try:
+                result=account_readonly.read_balances()
+                data=json.dumps(result,ensure_ascii=False,allow_nan=False).encode()
+                typ='application/json; charset=utf-8'
+            except account_readonly.AccountError:
+                self.send_response(502)
+                self.send_header('Content-Type','application/json; charset=utf-8')
+                self.send_header('Cache-Control','no-store')
+                self.end_headers()
+                self.wfile.write(b'{"error":"Account data temporarily unavailable"}')
+                return
         elif path=='/api/paper':
             try:
                 data=json.dumps(paper_bridge.status(DB),ensure_ascii=False,allow_nan=False).encode();typ='application/json; charset=utf-8'
