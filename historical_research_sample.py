@@ -59,7 +59,9 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
             crossframe=cross_timeframe_gap_evidence(targets,first,fifteen)
             (dest/f'{market}_gap_crossframe.json').write_text(
                 json.dumps(crossframe,ensure_ascii=False,indent=2),encoding='utf-8')
-            gap_requery={'crossframe':crossframe,'requested':len(targets),'results':checked,
+            gap_requery={'crossframe':crossframe,
+                         'crossframe_status_counts':{status:sum(item['status']==status for item in crossframe['results']) for status in ('15M_PRESENT_5M_INCOMPLETE','NO_15M_AGGREGATE','OUTSIDE_15M_HISTORY','ALL_5M_PRESENT')},
+                         'requested':len(targets),'results':checked,
                          'recovered':sum(x['status']=='RECOVERED_BY_REQUERY' for x in checked),
                          'unresolved':sum(x['status']=='UNRESOLVED_AFTER_REQUERY' for x in checked),
                          'errors':sum(x['status']=='REQUERY_ERROR' for x in checked)}
