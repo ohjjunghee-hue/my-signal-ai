@@ -19,4 +19,4 @@ jobs:
         with:
           python-version: '3.11'
       - name: Test sampled exit audit
-        run: python -m unittest -v test_paper_exit_audit_readonly test_backup_offline_verify test_backup_producer_integration
+        run: python -m unittest -v test_paper_exit_audit_readonly test_backup_offline_verify test_backup_producer_integration test_backup_concurrent_writes
