@@ -21,6 +21,9 @@ def verify_backup(blob):
         if manifest.get("integrity")!="ok":
             raise ValueError("Missing source integrity confirmation")
         raw=archive.read("signals.db")
+    digest=hashlib.sha256(raw).hexdigest()
+    if manifest.get("sha256")!=digest:
+        raise ValueError("Backup SHA-256 mismatch or missing digest")
     with tempfile.TemporaryDirectory() as temp:
         db=pathlib.Path(temp)/"signals.db"
         db.write_bytes(raw)
