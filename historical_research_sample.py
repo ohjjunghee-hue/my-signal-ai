@@ -44,6 +44,9 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
         integrity={str(unit):validate_candles(json.loads((dest/f'{market}_{unit}m.json').read_text()),unit)
                    for unit in (5,15,60)}
         (dest/f'{market}_candle_integrity.json').write_text(json.dumps(integrity,ensure_ascii=False,indent=2),encoding='utf-8')
+        invalid_units=[unit for unit,check in integrity.items() if check['status']!='VALID']
+        if invalid_units:
+            raise ValueError(f'{market}: invalid candle data in {invalid_units}; refusing BUY research evaluation')
         audit=evaluate_market(market,dest,analyze,horizon_minutes=180)
         five=json.loads((dest/f'{market}_5m.json').read_text())
         trade_outcomes=evaluate_outcomes(audit['events'],five)
