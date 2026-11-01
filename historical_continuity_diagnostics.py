@@ -29,8 +29,12 @@ def coverage_report(rows, unit_minutes, required_bars):
         raise ValueError("required_bars must be positive")
     segments=continuous_segments(rows,unit_minutes)
     eligible=sum(max(0,s['bars']-required_bars+1) for s in segments)
+    segment_lengths=sorted((s['bars'] for s in segments),reverse=True)
+    top_segment_lengths=segment_lengths[:5]
     return {'unit_minutes':unit_minutes,'required_contiguous_bars':required_bars,
             'total_bars':len(rows),'segment_count':len(segments),
             'longest_segment_bars':max((s['bars'] for s in segments),default=0),
             'eligible_rolling_windows':eligible,
+            'top_5_segment_lengths':top_segment_lengths,
+            'insufficient_contiguous_bars':max(0,required_bars-(segment_lengths[0] if segment_lengths else 0)),
             'segments':segments}
