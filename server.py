@@ -20,7 +20,7 @@ WORKERS=max(1,min(8,int(os.getenv('DEEP_WORKERS','4'))))
 BASE='https://api.bithumb.com'
 NEWS_FEEDS=[('CoinDesk','https://www.coindesk.com/arc/outboundfeeds/rss/'),('Cointelegraph','https://cointelegraph.com/rss')]
 lock=threading.Lock()
-state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V48-INTEGRATED','selection_details':{},'outcome_summary':{},'market_audit':[],'market_leaders':[],'tracked':[],'setup_events':[],'market_updated':None,'momentum':[],'momentum_updated':None,'signal_diagnostics':{},'analysis_workers':WORKERS,'audit_updated':None,'buy_enabled':True,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
+state={'status':'대기','last_scan':None,'errors':[],'market_count':0,'deep_count':0,'news_updated':None,'news':[],'candidates':[],'scan_seconds':INTERVAL,'engine_version':'V49-MTF-GATED','selection_details':{},'outcome_summary':{},'market_audit':[],'market_leaders':[],'tracked':[],'setup_events':[],'market_updated':None,'momentum':[],'momentum_updated':None,'signal_diagnostics':{},'analysis_workers':WORKERS,'audit_updated':None,'buy_enabled':True,'news_ai_enabled':False,'social_enabled':False,'midnight':{'active':False,'status':'대기','last_check':None,'baseline_time':None,'checked':0,'leaders':[],'errors':[],'note':'자정 전후 실제 가격 변화 감시 · 매수 신호 아님'}}
 
 def get_json(path):
     req=urllib.request.Request(BASE+path,headers={'User-Agent':'MY-SIGNAL-V44/0.1','Accept':'application/json'})
@@ -801,7 +801,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return
         if path=='/health':
-            data=json.dumps({'ok':True,'engine':'V48-INTEGRATED','last_scan':state['last_scan']}).encode();typ='application/json; charset=utf-8'
+            data=json.dumps({'ok':True,'engine':state['engine_version'],'last_scan':state['last_scan'],'scan_age_seconds':round(time.time()-state['last_scan']) if state['last_scan'] else None,'buy_gate':'11-frame-on-technical-BUY','real_money_ready':False}).encode();typ='application/json; charset=utf-8'
         elif path=='/api/status':
             with lock: data=json.dumps(state,ensure_ascii=False,allow_nan=False).encode()
             typ='application/json; charset=utf-8'
