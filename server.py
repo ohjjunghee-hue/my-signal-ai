@@ -192,6 +192,8 @@ def db_init():
         ov.init(con)
         con.execute('CREATE TABLE IF NOT EXISTS snapshots(id INTEGER PRIMARY KEY,ts INTEGER,market TEXT,status TEXT,score INTEGER,entry REAL,stop REAL,features TEXT,reason TEXT)')
         con.execute('CREATE INDEX IF NOT EXISTS ix_market_time ON snapshots(market,ts)')
+        con.execute('CREATE TABLE IF NOT EXISTS buy_gate_audit(id INTEGER PRIMARY KEY,ts INTEGER,market TEXT,raw_buy INTEGER,allowed INTEGER,verdict TEXT,reasons TEXT,price REAL)')
+        con.execute('CREATE INDEX IF NOT EXISTS ix_buy_gate_audit_time ON buy_gate_audit(ts)')
         con.execute('CREATE TABLE IF NOT EXISTS signal_outcomes(id INTEGER PRIMARY KEY,market TEXT,day TEXT,first_seen INTEGER,last_seen INTEGER,entry REAL,last_price REAL,max_pct REAL,min_pct REAL,status TEXT,signal_type TEXT,UNIQUE(market,day))')
         # Safe additive migration: existing signal records remain untouched.
         cols={row[1] for row in con.execute('PRAGMA table_info(signal_outcomes)')}
@@ -627,6 +629,14 @@ def scan():
     with lock:state['signal_diagnostics']=diagnostics
     results.sort(key=lambda x:({'BUY':0,'PRE':1,'READY':2,'WATCH':3,'WAIT':4,'DATA':5}.get(x.get('status'),6),x.get('tier_rank',3),-x.get('score',0)))
     with sqlite3.connect(DB) as con:
+        for result in results:
+            gate=result.get('higher_timeframe_gate')
+            if gate is None:continue
+            con.execute('INSERT INTO buy_gate_audit(ts,market,raw_buy,allowed,verdict,reasons,price) VALUES(?,?,?,?,?,?,?)',
+                (int(result['time']),result['market'],1,int(bool(gate.get('allowed'))),
+                 gate.get('verdict','DATA'),json.dumps(gate.get('reasons',[]),ensure_ascii=False),
+                 float(result.get('price') or 0)))
+        con.execute('DELETE FROM buy_gate_audit WHERE ts < ?', (int(time.time())-30*86400,))
         ov.observe(con,tickers,int(time.time()))
         ov.record(con,results,int(time.time()))
         update_outcomes(con,tickers,int(time.time()))
@@ -866,6 +876,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with sqlite3.connect(DB) as con:
                 rows=con.execute('SELECT market,first_seen,last_seen,entry,last_price,max_pct,min_pct,status,signal_type FROM signal_outcomes ORDER BY first_seen DESC LIMIT 100').fetchall()
             data=json.dumps([dict(zip(('market','first_seen','last_seen','entry','last_price','max_pct','min_pct','status','signal_type'),r)) for r in rows],ensure_ascii=False).encode();typ='application/json; charset=utf-8'
+        elif path=='/api/buy-gate-audit':
+            with sqlite3.connect(DB) as con:
+                rows=con.execute('SELECT ts,market,allowed,verdict,reasons,price FROM buy_gate_audit ORDER BY id DESC LIMIT 200').fetchall()
+            data=json.dumps({'rows':[{'time':r[0],'market':r[1],'allowed':bool(r[2]),'verdict':r[3],
+                'reasons':json.loads(r[4]),'price':r[5]} for r in rows],
+                'note':'BUY 조건 발생 당시 필터 결과 기록. 손익 및 체결 성과가 아님.'},
+                ensure_ascii=False,allow_nan=False).encode();typ='application/json; charset=utf-8'
         elif path=='/api/history':
             with sqlite3.connect(DB) as con:
                 rows=con.execute('SELECT ts,market,status,score,entry,stop,reason FROM snapshots ORDER BY id DESC LIMIT 200').fetchall()
