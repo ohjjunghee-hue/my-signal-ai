@@ -28,6 +28,10 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                                     'early_base_buy_candidates':comparison['detected'],
                                     'recall_pct':comparison['recall_pct']}
         results[market]={'base_buy_candidates':audit['base_buy_events'],
+                         'eligible_evaluations':audit['eligible_evaluations'],
+                         'insufficient_evaluations':audit['insufficient_evaluations'],
+                         'status_counts':audit['status_counts'],
+                         'buy_gate_fail_counts':audit['buy_gate_fail_counts'],
                          'resolved_candidates':audit['resolved'],
                          'unresolved_candidates':audit['unresolved'],
                          'hit_counts':audit['hit_counts'],
