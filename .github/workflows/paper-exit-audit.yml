@@ -32,7 +32,7 @@ on:
       - 'historical_snapshot_compare.py'
       - 'test_historical_snapshot_compare.py'
       - 'historical_candle_integrity.py'
-      - 'test_historical_candle_integrity test_historical_gap_requery.py'
+      - 'test_historical_candle_integrity test_historical_gap_requery test_historical_gap_crossframe.py'
       - '.github/workflows/paper-exit-audit.yml'
   workflow_dispatch:
 jobs:
