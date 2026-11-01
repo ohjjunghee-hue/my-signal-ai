@@ -11,6 +11,18 @@ from historical_surge_recall import surge_events, compare_candidates
 from historical_trade_outcomes import evaluate_outcomes
 from server import analyze
 
+def classify_recall(comparison, eligible_evaluations):
+    """Do not score signal recall when no historical BUY evaluations were possible."""
+    if eligible_evaluations == 0:
+        return {'surge_events':comparison['events'],
+                'early_base_buy_candidates':comparison['detected'],
+                'recall_pct':None,
+                'evaluation_status':'NOT_EVALUABLE_HISTORY'}
+    return {'surge_events':comparison['events'],
+            'early_base_buy_candidates':comparison['detected'],
+            'recall_pct':comparison['recall_pct'],
+            'evaluation_status':'PARTIALLY_EVALUABLE' if comparison['events'] else 'NO_SURGE_EVENTS'}
+
 def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,out_dir='historical_data'):
     dest=Path(out_dir);dest.mkdir(parents=True,exist_ok=True)
     results={}
@@ -27,9 +39,7 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
         for threshold in (3,10,50):
             events=surge_events(five,threshold_pct=threshold,horizon_bars=36,cooldown_bars=36)
             comparison=compare_candidates(events,signal_times,lead_minutes=5,lookback_minutes=180)
-            recalls[str(threshold)]={'surge_events':comparison['events'],
-                                    'early_base_buy_candidates':comparison['detected'],
-                                    'recall_pct':comparison['recall_pct']}
+            recalls[str(threshold)]=classify_recall(comparison,audit['eligible_evaluations'])
         continuity={}
         for unit in (5,15,60):
             frame=json.loads((dest/f'{market}_{unit}m.json').read_text())
@@ -67,7 +77,8 @@ def run(markets=('KRW-BTC','KRW-ETH','KRW-XRP','KRW-SUI','KRW-APT'),count=1000,o
                            'max future high is not executable profit',
                            'trade outcomes are simulated with assumed 0.2% costs; no slippage/spread or real fills',
                            'only sampled markets and historical period; not overall recall',
-                           'event windows overlap; cooldown is a research assumption']}
+                           'event windows overlap; cooldown is a research assumption',
+                           'recall with no eligible historical evaluations is NOT_EVALUABLE, not 0%']}
     (dest/'research_summary.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps(report,ensure_ascii=False))
     return report
